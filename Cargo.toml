@@ -25,6 +25,7 @@ base64 = "0.21.7"
 
 [lib]
 name = "libp2p_pyrust"
+path = "src/lib.rs"
 crate-type = ["cdylib"]
 
 [build-dependencies]
