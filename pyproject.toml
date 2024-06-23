@@ -1,0 +1,27 @@
+[build-system]
+requires = ["maturin>=1.4,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "libp2p-pyrust"
+version = "0.1.0"
+authors = [
+    { name = "Anastasios Kaltakis, email = "anastasioskaltakis@gmail.com" }
+]
+description = "Python bindings for libp2p implemented in Rust"
+readme = "README.rst"
+license = { text = "MIT" }
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
+bindings = "pyo3"
+metadata = "Cargo.toml"
+
+[tool.maturin.sdist]
+include = ["src", "Cargo.toml", "README.rst", "LICENSE"]
