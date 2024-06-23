@@ -1,1 +1,15 @@
-/target
+# Ignore compiled files
+target/
+**/*.rs.bk
+
+# Ignore the Cargo.lock file
+/Cargo.lock
+
+# Ignore Python compiled files
+__pycache__/
+*.py[cod]
+
+# Ignore virtual environments
+env/
+venv/
+
