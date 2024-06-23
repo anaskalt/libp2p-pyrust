@@ -25,7 +25,7 @@ base64 = "0.21.7"
 
 [lib]
 name = "libp2p_pyrust"
-path = "src/lib.rs"
+path = "rust/lib.rs"
 crate-type = ["cdylib"]
 
 [build-dependencies]
@@ -44,6 +44,3 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
 ]
-
-[package.metadata.maturin.sdist]
-include = ["src", "Cargo.toml", "README.rst", "LICENSE"]

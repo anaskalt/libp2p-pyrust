@@ -3,7 +3,7 @@
 pub mod network;
 pub mod crypto;
 
-use p2p::P2PNetwork;
+use network::P2PNetwork;
 
 use lazy_static::lazy_static;
 use pyo3::prelude::*;
@@ -172,7 +172,7 @@ fn get_host_addrs(py: Python<'_>) -> PyResult<&PyAny> {
     pyo3_asyncio::tokio::future_into_py(py, async move {
         let network = tp.lock().await;
         if let Some(network) = &*network {
-            let addrs = network.full_addrs.read().await;
+            let addrs = network.full_addresses.read().await;
             Python::with_gil(|py| {
                 Ok(addrs.clone().into_iter().map(|peer| peer.to_string()).collect::<Vec<String>>().into_py(py))
             })
@@ -235,7 +235,7 @@ fn generate_ed25519_keypair(path: String) -> PyResult<String> {
 /// The signature as a base64 encoded string.
 #[pyfunction]
 fn sign_data(file_path_str: String, data: Vec<u8>) -> PyResult<String> {
-    let keypair = crypto::sign_data(file_path_str, data)?;
+    let keypair = crypto::sign_data_with_key(file_path_str, data)?;
     Ok(keypair)
 }
 
@@ -250,7 +250,7 @@ fn sign_data(file_path_str: String, data: Vec<u8>) -> PyResult<String> {
 /// The serialized public key as a base64 encoded string.
 #[pyfunction]
 fn get_serialize_public_key(path: String) -> PyResult<String> {
-    let pub_key = crypto::get_serialize_public_key(path)?;
+    let pub_key = crypto::serialize_public_key_to_string(path)?;
     Ok(pub_key)
 }
 

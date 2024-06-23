@@ -1,0 +1,6 @@
+include README.rst
+include LICENSE
+include CHANGELOG.rst
+include Cargo.toml
+recursive-include rust *
+recursive-include python *

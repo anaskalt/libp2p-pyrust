@@ -6,7 +6,7 @@ use std::{collections::HashSet, sync::Arc};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-use tokio::{select, sync::{mpsc, RwLock, oneshot, broadcast}, time::{interval, Duration}};
+use tokio::{io, select, sync::{mpsc, RwLock, oneshot, broadcast}, time::{interval, Duration}};
 use anyhow::{Result, Context};
 use std::str::FromStr;
 
@@ -67,7 +67,11 @@ impl P2PNetwork {
 
         let mut swarm = libp2p::SwarmBuilder::with_existing_identity(local_key.clone())
             .with_tokio()
-            .with_tcp(tcp::Config::default(), noise::Config::new, yamux::Config::default())?
+            .with_tcp(
+                tcp::Config::default(),
+                noise::Config::new,
+                || yamux::Config::default(),
+            )?
             .with_quic()
             .with_dns()?
             .with_behaviour(|key| {
@@ -123,7 +127,7 @@ impl P2PNetwork {
         let (message_tx, _) = broadcast::channel(1024);
         let (connection_closed_tx, _) = broadcast::channel(1024);
 
-        let message_tx_clone = message_tx.clone();
+        let _message_tx_clone = message_tx.clone();
         let connection_closed_tx_clone = connection_closed_tx.clone();
         let mut timer = interval(Duration::from_secs(10));
         let full_addresses = Arc::new(RwLock::new(Vec::new()));
