@@ -1,5 +1,9 @@
 use libp2p::identity;
-use std::{fs::File, io::{Read, Write}, path::PathBuf};
+use std::{
+    fs::File,
+    io::{Read, Write},
+    path::PathBuf,
+};
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
@@ -29,7 +33,8 @@ pub fn save_keypair_to_file(keypair: &identity::Keypair, file_path: String) -> s
         path
     };
 
-    let keypair_bytes = keypair.to_protobuf_encoding()
+    let keypair_bytes = keypair
+        .to_protobuf_encoding()
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
 
     let mut file = File::create(path)?;
@@ -64,7 +69,9 @@ pub fn load_keypair_from_file(file_path: String) -> std::io::Result<identity::Ke
 /// The signature as a base64 encoded string, or an I/O error if it fails.
 pub fn sign_data_with_key(file_path: String, data: Vec<u8>) -> std::io::Result<String> {
     let keypair = load_keypair_from_file(file_path)?;
-    let signature = keypair.sign(&data).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+    let signature = keypair
+        .sign(&data)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
     Ok(STANDARD.encode(&signature))
 }
 
@@ -89,8 +96,11 @@ pub fn serialize_public_key_to_string(file_path: String) -> std::io::Result<Stri
 /// # Returns
 /// The deserialized public key, or an I/O error if it fails.
 pub fn deserialize_public_key_from_string(encoded: String) -> std::io::Result<identity::PublicKey> {
-    let bytes = STANDARD.decode(encoded).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-    identity::PublicKey::try_decode_protobuf(&bytes).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+    let bytes = STANDARD
+        .decode(encoded)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    identity::PublicKey::try_decode_protobuf(&bytes)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
 }
 
 /// Verify a signature with a public key.
@@ -102,11 +112,20 @@ pub fn deserialize_public_key_from_string(encoded: String) -> std::io::Result<id
 ///
 /// # Returns
 /// An empty result if the signature is valid, or an I/O error if it is not.
-pub fn verify_signature_with_key(public_key: &identity::PublicKey, data: Vec<u8>, signature: String) -> std::io::Result<()> {
-    let signature_bytes = STANDARD.decode(signature).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+pub fn verify_signature_with_key(
+    public_key: &identity::PublicKey,
+    data: Vec<u8>,
+    signature: String,
+) -> std::io::Result<()> {
+    let signature_bytes = STANDARD
+        .decode(signature)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
     if public_key.verify(&data, &signature_bytes) {
         Ok(())
     } else {
-        Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Verification failed"))
+        Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Verification failed",
+        ))
     }
 }

@@ -1,18 +1,18 @@
-/// The `libp2p_pyrust` crate provides Python bindings for libp2p implemented in Rust.
-
-pub mod network;
 pub mod crypto;
+/// The `libp2p_pyrust` crate provides Python bindings for libp2p implemented in Rust.
+pub mod network;
 
 use network::P2PNetwork;
 
 use lazy_static::lazy_static;
 use pyo3::prelude::*;
+use pyo3::types::PyBytes;
 use std::sync::Arc;
 use tokio::sync::Mutex as AsyncMutex;
-use pyo3::types::PyBytes;
 
 lazy_static! {
-    static ref GLOBAL_P2P_NETWORK: Arc<AsyncMutex<Option<P2PNetwork>>> = Arc::new(AsyncMutex::new(None));
+    static ref GLOBAL_P2P_NETWORK: Arc<AsyncMutex<Option<P2PNetwork>>> =
+        Arc::new(AsyncMutex::new(None));
 }
 
 /// Initializes the global P2P network.
@@ -64,12 +64,21 @@ fn get_global_connected_peers(py: Python<'_>) -> PyResult<&PyAny> {
     pyo3_asyncio::tokio::future_into_py(py, async move {
         let network = tp.lock().await;
         if let Some(network) = &*network {
-            let peers = network.get_connected_peers().await.expect("Failed to get connected peers");
+            let peers = network
+                .get_connected_peers()
+                .await
+                .expect("Failed to get connected peers");
             Python::with_gil(|py| {
-                Ok(peers.into_iter().map(|peer| peer.to_string()).collect::<Vec<String>>().into_py(py))
+                Ok(peers
+                    .into_iter()
+                    .map(|peer| peer.to_string())
+                    .collect::<Vec<String>>()
+                    .into_py(py))
             })
         } else {
-            Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("P2PNetwork is not initialized"))
+            Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                "P2PNetwork is not initialized",
+            ))
         }
     })
 }
@@ -91,11 +100,16 @@ fn connect_to_peer(py: Python<'_>, addr: String) -> PyResult<&PyAny> {
         let network = tp.lock().await;
         if let Some(network) = &*network {
             network.connect_to_peer(&addr).await.map_err(|e| {
-                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Failed to connect to peer: {}", e))
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                    "Failed to connect to peer: {}",
+                    e
+                ))
             })?;
             Ok(Python::with_gil(|py| py.None()))
         } else {
-            Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("P2PNetwork is not initialized"))
+            Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                "P2PNetwork is not initialized",
+            ))
         }
     })
 }
@@ -117,11 +131,16 @@ fn publish_message(py: Python<'_>, message: Vec<u8>) -> PyResult<&PyAny> {
         let network = tp.lock().await;
         if let Some(network) = &*network {
             network.publish_message(message).await.map_err(|e| {
-                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Failed to publish message: {}", e))
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                    "Failed to publish message: {}",
+                    e
+                ))
             })?;
             Ok(Python::with_gil(|py| py.None()))
         } else {
-            Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("P2PNetwork is not initialized"))
+            Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                "P2PNetwork is not initialized",
+            ))
         }
     })
 }
@@ -142,8 +161,13 @@ fn subscribe_to_messages(py: Python, callback: PyObject) -> PyResult<&PyAny> {
     pyo3_asyncio::tokio::future_into_py(py, async move {
         let mut receiver_result = {
             let network = tp.lock().await;
-            network.as_ref()
-                .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("P2PNetwork is not initialized"))?
+            network
+                .as_ref()
+                .ok_or_else(|| {
+                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                        "P2PNetwork is not initialized",
+                    )
+                })?
                 .subscribe_to_messages()
         };
 
@@ -174,10 +198,17 @@ fn get_host_addrs(py: Python<'_>) -> PyResult<&PyAny> {
         if let Some(network) = &*network {
             let addrs = network.full_addrs.read().await;
             Python::with_gil(|py| {
-                Ok(addrs.clone().into_iter().map(|peer| peer.to_string()).collect::<Vec<String>>().into_py(py))
+                Ok(addrs
+                    .clone()
+                    .into_iter()
+                    .map(|peer| peer.to_string())
+                    .collect::<Vec<String>>()
+                    .into_py(py))
             })
         } else {
-            Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("P2PNetwork is not initialized"))
+            Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                "P2PNetwork is not initialized",
+            ))
         }
     })
 }
@@ -198,11 +229,11 @@ fn get_peer_id(py: Python<'_>) -> PyResult<&PyAny> {
         let network = tp.lock().await;
         if let Some(network) = &*network {
             let peer_id = network.peer_id.to_string();
-            Python::with_gil(|_py| {
-                Ok(peer_id)
-            })
+            Python::with_gil(|_py| Ok(peer_id))
         } else {
-            Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("P2PNetwork is not initialized"))
+            Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                "P2PNetwork is not initialized",
+            ))
         }
     })
 }

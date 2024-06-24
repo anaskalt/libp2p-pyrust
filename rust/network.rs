@@ -1,25 +1,30 @@
 use futures::stream::StreamExt;
 use libp2p::{
-    self, gossipsub, kad::{self, store::MemoryStore, Mode, ProgressStep}, mdns::{self},
-    noise, swarm::{NetworkBehaviour, SwarmEvent}, tcp, yamux, Multiaddr, PeerId, identify, multiaddr::Protocol,
+    self, gossipsub, identify,
+    kad::{self, store::MemoryStore, Mode, ProgressStep},
+    mdns::{self},
+    multiaddr::Protocol,
+    noise,
+    swarm::{NetworkBehaviour, SwarmEvent},
+    tcp, yamux, Multiaddr, PeerId,
 };
-use std::{collections::HashSet, sync::Arc};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use std::{collections::HashSet, sync::Arc};
 
-use tokio::{io, select};
-use tokio::sync::{mpsc, RwLock};
-use anyhow::Result;
 use anyhow::Context;
-use tokio::sync::oneshot;
-use tokio::sync::broadcast;
-use tokio::time::{interval, Duration};
+use anyhow::Result;
 use std::str::FromStr;
+use tokio::sync::broadcast;
+use tokio::sync::oneshot;
+use tokio::sync::{mpsc, RwLock};
+use tokio::time::{interval, Duration};
+use tokio::{io, select};
 
 use pyo3::prelude::*;
 
-use chrono::{SecondsFormat, Utc};
 use crate::crypto;
+use chrono::{SecondsFormat, Utc};
 
 /// Network behaviour combining gossipsub, mDNS, Kademlia, and identify protocols.
 #[derive(NetworkBehaviour)]
@@ -32,8 +37,14 @@ struct MyBehaviour {
 
 /// Commands that can be sent to the swarm.
 enum SwarmCommand {
-    ConnectPeer(Multiaddr, oneshot::Sender<std::result::Result<(), anyhow::Error>>),
-    PublishMessage(Vec<u8>, oneshot::Sender<std::result::Result<(), anyhow::Error>>),
+    ConnectPeer(
+        Multiaddr,
+        oneshot::Sender<std::result::Result<(), anyhow::Error>>,
+    ),
+    PublishMessage(
+        Vec<u8>,
+        oneshot::Sender<std::result::Result<(), anyhow::Error>>,
+    ),
     GetConnectedPeers(oneshot::Sender<std::result::Result<HashSet<PeerId>, anyhow::Error>>),
     GetClosestPeers(PeerId),
 }
@@ -70,7 +81,12 @@ impl P2PNetwork {
     /// # Returns
     ///
     /// A result containing the new P2P network instance or an error.
-    pub async fn new(bootnodes: Vec<String>, port: u64, key_path: String, topic_name: String) -> Result<Self, anyhow::Error> {
+    pub async fn new(
+        bootnodes: Vec<String>,
+        port: u64,
+        key_path: String,
+        topic_name: String,
+    ) -> Result<Self, anyhow::Error> {
         let local_key = crypto::load_keypair_from_file(key_path)?;
         let local_peer_id = PeerId::from(local_key.public());
         println!("Local peer id: {:?}", local_peer_id);
@@ -103,9 +119,13 @@ impl P2PNetwork {
                     gossipsub_config,
                 )?;
 
-                let mdns = mdns::tokio::Behaviour::new(mdns::Config::default(), key.public().to_peer_id())?;
+                let mdns = mdns::tokio::Behaviour::new(
+                    mdns::Config::default(),
+                    key.public().to_peer_id(),
+                )?;
 
-                let mut identify_cfg = identify::Config::new("/ipfs/id/1.0.0".to_string(), key.public());
+                let mut identify_cfg =
+                    identify::Config::new("/ipfs/id/1.0.0".to_string(), key.public());
                 identify_cfg = identify_cfg.with_push_listen_addr_updates(true);
                 let identify = identify::Behaviour::new(identify_cfg);
 
@@ -113,7 +133,12 @@ impl P2PNetwork {
                 let store = kad::store::MemoryStore::new(key.public().to_peer_id());
                 let kademlia = kad::Behaviour::with_config(key.public().to_peer_id(), store, cfg);
 
-                Ok(MyBehaviour { gossipsub, mdns, kademlia, identify })
+                Ok(MyBehaviour {
+                    gossipsub,
+                    mdns,
+                    kademlia,
+                    identify,
+                })
             })?
             .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(5)))
             .build();
@@ -126,7 +151,10 @@ impl P2PNetwork {
         for peer_addr_str in bootnodes {
             if let Ok(multiaddr) = peer_addr_str.parse::<Multiaddr>() {
                 if let Some(peer_id) = P2PNetwork::extract_peer_id_from_multiaddr(&multiaddr) {
-                    swarm.behaviour_mut().kademlia.add_address(&peer_id, multiaddr);
+                    swarm
+                        .behaviour_mut()
+                        .kademlia
+                        .add_address(&peer_id, multiaddr);
                 } else {
                     println!("PeerId not found in multiaddr");
                 }
@@ -290,9 +318,14 @@ impl P2PNetwork {
     ///
     /// A result indicating success or failure.
     pub async fn connect_to_peer(&self, addr: &str) -> Result<(), anyhow::Error> {
-        let addr = addr.parse::<Multiaddr>().context("Error parsing Multiaddr")?;
+        let addr = addr
+            .parse::<Multiaddr>()
+            .context("Error parsing Multiaddr")?;
         let (tx, rx) = oneshot::channel();
-        self.command_tx.send(SwarmCommand::ConnectPeer(addr, tx)).await.context("Error sending connection command")?;
+        self.command_tx
+            .send(SwarmCommand::ConnectPeer(addr, tx))
+            .await
+            .context("Error sending connection command")?;
         rx.await.context("Error waiting for connection response")?
     }
 
@@ -307,8 +340,12 @@ impl P2PNetwork {
     /// A result indicating success or failure.
     pub async fn publish_message(&self, message: Vec<u8>) -> Result<(), anyhow::Error> {
         let (tx, rx) = oneshot::channel();
-        self.command_tx.send(SwarmCommand::PublishMessage(message, tx)).await.context("Error sending publish message command")?;
-        rx.await.context("Error waiting for message response to be published")?
+        self.command_tx
+            .send(SwarmCommand::PublishMessage(message, tx))
+            .await
+            .context("Error sending publish message command")?;
+        rx.await
+            .context("Error waiting for message response to be published")?
     }
 
     /// Gets a list of PeerIds of all peer nodes that are currently directly connected.
@@ -318,8 +355,12 @@ impl P2PNetwork {
     /// A result containing a set of connected PeerIds or an error.
     pub async fn get_connected_peers(&self) -> Result<HashSet<PeerId>, anyhow::Error> {
         let (tx, rx) = oneshot::channel();
-        self.command_tx.send(SwarmCommand::GetConnectedPeers(tx)).await.context("Error sending get connected peers command")?;
-        rx.await.context("Error waiting for get connected peers response")?
+        self.command_tx
+            .send(SwarmCommand::GetConnectedPeers(tx))
+            .await
+            .context("Error sending get connected peers command")?;
+        rx.await
+            .context("Error waiting for get connected peers response")?
     }
 
     /// Subscribes to message events.
@@ -350,8 +391,12 @@ impl P2PNetwork {
     ///
     /// A result indicating success or failure.
     pub async fn get_closest_peers(&self, peer_id_str: &str) -> Result<(), anyhow::Error> {
-        let peer_id = PeerId::from_str(peer_id_str).context(format!("Error parsing PeerId from string: {}", peer_id_str))?;
-        self.command_tx.send(SwarmCommand::GetClosestPeers(peer_id)).await.context("Error sending get closest peers command")?;
+        let peer_id = PeerId::from_str(peer_id_str)
+            .context(format!("Error parsing PeerId from string: {}", peer_id_str))?;
+        self.command_tx
+            .send(SwarmCommand::GetClosestPeers(peer_id))
+            .await
+            .context("Error sending get closest peers command")?;
         Ok(())
     }
 }
