@@ -72,7 +72,7 @@ pub fn sign_data_with_key(file_path: String, data: Vec<u8>) -> std::io::Result<S
     let signature = keypair
         .sign(&data)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
-    Ok(STANDARD.encode(&signature))
+    Ok(STANDARD.encode(signature))
 }
 
 /// Serialize the public key to a string.
@@ -85,7 +85,7 @@ pub fn sign_data_with_key(file_path: String, data: Vec<u8>) -> std::io::Result<S
 pub fn serialize_public_key_to_string(file_path: String) -> std::io::Result<String> {
     let keypair = load_keypair_from_file(file_path)?;
     let public_key_bytes = keypair.public().encode_protobuf();
-    Ok(STANDARD.encode(&public_key_bytes))
+    Ok(STANDARD.encode(public_key_bytes))
 }
 
 /// Deserialize a public key from a string.

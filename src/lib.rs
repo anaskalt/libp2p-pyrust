@@ -11,8 +11,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex as AsyncMutex;
 
 lazy_static! {
-    static ref GLOBAL_P2P_NETWORK: Arc<AsyncMutex<Option<P2PNetwork>>> =
-        Arc::new(AsyncMutex::new(None));
+    static ref GLOBAL_P2P_NETWORK: Arc<AsyncMutex<Option<P2PNetwork>>> = Arc::new(AsyncMutex::new(None));
 }
 
 /// Initializes the global P2P network.
@@ -100,10 +99,7 @@ fn connect_to_peer(py: Python<'_>, addr: String) -> PyResult<&PyAny> {
         let network = tp.lock().await;
         if let Some(network) = &*network {
             network.connect_to_peer(&addr).await.map_err(|e| {
-                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                    "Failed to connect to peer: {}",
-                    e
-                ))
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Failed to connect to peer: {}", e))
             })?;
             Ok(Python::with_gil(|py| py.None()))
         } else {
@@ -131,10 +127,7 @@ fn publish_message(py: Python<'_>, message: Vec<u8>) -> PyResult<&PyAny> {
         let network = tp.lock().await;
         if let Some(network) = &*network {
             network.publish_message(message).await.map_err(|e| {
-                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                    "Failed to publish message: {}",
-                    e
-                ))
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Failed to publish message: {}", e))
             })?;
             Ok(Python::with_gil(|py| py.None()))
         } else {
@@ -163,11 +156,7 @@ fn subscribe_to_messages(py: Python, callback: PyObject) -> PyResult<&PyAny> {
             let network = tp.lock().await;
             network
                 .as_ref()
-                .ok_or_else(|| {
-                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-                        "P2PNetwork is not initialized",
-                    )
-                })?
+                .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("P2PNetwork is not initialized"))?
                 .subscribe_to_messages()
         };
 
@@ -285,18 +274,32 @@ fn get_serialize_public_key(path: String) -> PyResult<String> {
     Ok(pub_key)
 }
 
+pub fn get_version() -> String {
+    let version = env!("CARGO_PKG_VERSION").to_string();
+    // cargo uses "1.0-alpha1" etc. while python uses "1.0.0a1", this is not full compatibility,
+    // but it's good enough for now
+    // see https://docs.rs/semver/1.0.9/semver/struct.Version.html#method.parse for rust spec
+    // see https://peps.python.org/pep-0440/ for python spec
+    // it seems the dot after "alpha/beta" e.g. "-alpha.1" is not necessary, hence why this works
+    version.replace("-alpha", "a").replace("-beta", "b")
+}
+
 /// The main Python module definition.
 #[pymodule]
 fn libp2p_pyrust(_py: Python, m: &PyModule) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(init_global_p2p_network, m)?)?;
-    m.add_function(wrap_pyfunction!(get_global_connected_peers, m)?)?;
-    m.add_function(wrap_pyfunction!(connect_to_peer, m)?)?;
-    m.add_function(wrap_pyfunction!(publish_message, m)?)?;
-    m.add_function(wrap_pyfunction!(subscribe_to_messages, m)?)?;
-    m.add_function(wrap_pyfunction!(generate_ed25519_keypair, m)?)?;
-    m.add_function(wrap_pyfunction!(get_host_addrs, m)?)?;
-    m.add_function(wrap_pyfunction!(get_peer_id, m)?)?;
-    m.add_function(wrap_pyfunction!(sign_data, m)?)?;
-    m.add_function(wrap_pyfunction!(get_serialize_public_key, m)?)?;
+    let version = get_version();
+    m.add("__version__", version.clone())?;
+    // keep VERSION for compatibility
+    m.add("VERSION", version)?;
+    m.add_wrapped(wrap_pyfunction!(init_global_p2p_network))?;
+    m.add_wrapped(wrap_pyfunction!(get_global_connected_peers))?;
+    m.add_wrapped(wrap_pyfunction!(connect_to_peer))?;
+    m.add_wrapped(wrap_pyfunction!(publish_message))?;
+    m.add_wrapped(wrap_pyfunction!(subscribe_to_messages))?;
+    m.add_wrapped(wrap_pyfunction!(generate_ed25519_keypair))?;
+    m.add_wrapped(wrap_pyfunction!(get_host_addrs))?;
+    m.add_wrapped(wrap_pyfunction!(get_peer_id))?;
+    m.add_wrapped(wrap_pyfunction!(sign_data))?;
+    m.add_wrapped(wrap_pyfunction!(get_serialize_public_key))?;
     Ok(())
 }
