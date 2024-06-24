@@ -11,7 +11,7 @@ setup(
     long_description_content_type='text/x-rst',
     url="https://github.com/anaskalt/libp2p_pyrust",
     packages=["libp2p_pyrust"],
-    rust_extensions=[RustExtension("libp2p_pyrust.libp2p_pyrust", "Cargo.toml", binding=Binding.PyO3)],
+    rust_extensions=[RustExtension("libp2p_pyrust.libp2p_pyrust", path="Cargo.toml", binding=Binding.PyO3)],
     include_package_data=True,
     zip_safe=False,
     classifiers=[
