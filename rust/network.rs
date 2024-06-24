@@ -1,13 +1,19 @@
 use futures::stream::StreamExt;
 use libp2p::{
-    self, gossipsub, kad::{self, store::MemoryStore, Mode, ProgressStep}, mdns, noise, swarm::{NetworkBehaviour, SwarmEvent}, tcp, yamux, Multiaddr, PeerId, identify, multiaddr::Protocol,
+    self, gossipsub, kad::{self, store::MemoryStore, Mode, ProgressStep}, mdns::{self},
+    noise, swarm::{NetworkBehaviour, SwarmEvent}, tcp, yamux, Multiaddr, PeerId, identify, multiaddr::Protocol,
 };
 use std::{collections::HashSet, sync::Arc};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-use tokio::{io, select, sync::{mpsc, RwLock, oneshot, broadcast}, time::{interval, Duration}};
-use anyhow::{Result, Context};
+use tokio::{io, select};
+use tokio::sync::{mpsc, RwLock};
+use anyhow::Result;
+use anyhow::Context;
+use tokio::sync::oneshot;
+use tokio::sync::broadcast;
+use tokio::time::{interval, Duration};
 use std::str::FromStr;
 
 use pyo3::prelude::*;
@@ -15,6 +21,7 @@ use pyo3::prelude::*;
 use chrono::{SecondsFormat, Utc};
 use crate::crypto;
 
+/// Network behaviour combining gossipsub, mDNS, Kademlia, and identify protocols.
 #[derive(NetworkBehaviour)]
 struct MyBehaviour {
     gossipsub: gossipsub::Behaviour,
@@ -23,43 +30,46 @@ struct MyBehaviour {
     identify: identify::Behaviour,
 }
 
+/// Commands that can be sent to the swarm.
 enum SwarmCommand {
-    ConnectPeer(Multiaddr, oneshot::Sender<Result<(), anyhow::Error>>),
-    PublishMessage(Vec<u8>, oneshot::Sender<Result<(), anyhow::Error>>),
-    GetConnectedPeers(oneshot::Sender<Result<HashSet<PeerId>, anyhow::Error>>),
+    ConnectPeer(Multiaddr, oneshot::Sender<std::result::Result<(), anyhow::Error>>),
+    PublishMessage(Vec<u8>, oneshot::Sender<std::result::Result<(), anyhow::Error>>),
+    GetConnectedPeers(oneshot::Sender<std::result::Result<HashSet<PeerId>, anyhow::Error>>),
     GetClosestPeers(PeerId),
 }
 
+/// Event representing a message received in the network.
 #[derive(Clone, Debug)]
 pub struct MessageEvent {
     pub source: PeerId,
     pub content: Vec<u8>,
 }
 
+/// Main struct representing the P2P network.
 #[pyclass]
 #[derive(Clone, Debug)]
 pub struct P2PNetwork {
     pub peer_id: PeerId,
     command_tx: mpsc::Sender<SwarmCommand>,
-    message_tx: broadcast::Sender<MessageEvent>,
-    connection_closed_tx: broadcast::Sender<PeerId>,
-    pub full_addresses: Arc<RwLock<Vec<String>>>,
+    subscribe_message_tx: broadcast::Sender<MessageEvent>,
+    connection_closed_message_tx: broadcast::Sender<PeerId>,
+    pub full_addrs: Arc<RwLock<Vec<String>>>,
     pub topic_name: String,
 }
 
 impl P2PNetwork {
-    /// Create a new P2PNetwork instance.
+    /// Creates a new P2P network instance.
     ///
     /// # Arguments
     ///
-    /// * `bootnodes` - List of bootnode addresses.
-    /// * `port` - Port to listen on.
+    /// * `bootnodes` - A list of bootstrap nodes to connect to.
+    /// * `port` - The port to listen on.
     /// * `key_path` - Path to the key file.
-    /// * `topic_name` - Name of the Gossipsub topic.
+    /// * `topic_name` - Name of the gossipsub topic.
     ///
     /// # Returns
     ///
-    /// A Result containing the P2PNetwork instance or an error.
+    /// A result containing the new P2P network instance or an error.
     pub async fn new(bootnodes: Vec<String>, port: u64, key_path: String, topic_name: String) -> Result<Self, anyhow::Error> {
         let local_key = crypto::load_keypair_from_file(key_path)?;
         let local_peer_id = PeerId::from(local_key.public());
@@ -70,7 +80,7 @@ impl P2PNetwork {
             .with_tcp(
                 tcp::Config::default(),
                 noise::Config::new,
-                || yamux::Config::default(),
+                yamux::Config::default,
             )?
             .with_quic()
             .with_dns()?
@@ -88,15 +98,20 @@ impl P2PNetwork {
                     .build()
                     .map_err(|msg| io::Error::new(io::ErrorKind::Other, msg))?;
 
-                let gossipsub = gossipsub::Behaviour::new(gossipsub::MessageAuthenticity::Signed(key.clone()), gossipsub_config)?;
+                let gossipsub = gossipsub::Behaviour::new(
+                    gossipsub::MessageAuthenticity::Signed(key.clone()),
+                    gossipsub_config,
+                )?;
 
                 let mdns = mdns::tokio::Behaviour::new(mdns::Config::default(), key.public().to_peer_id())?;
-                let identify_cfg = identify::Config::new("/ipfs/id/1.0.0".to_string(), key.public()).with_push_listen_addr_updates(true);
+
+                let mut identify_cfg = identify::Config::new("/ipfs/id/1.0.0".to_string(), key.public());
+                identify_cfg = identify_cfg.with_push_listen_addr_updates(true);
                 let identify = identify::Behaviour::new(identify_cfg);
 
-                let kademlia_cfg = kad::Config::default();
-                let kademlia_store = kad::store::MemoryStore::new(key.public().to_peer_id());
-                let kademlia = kad::Behaviour::with_config(key.public().to_peer_id(), kademlia_store, kademlia_cfg);
+                let cfg = kad::Config::default();
+                let store = kad::store::MemoryStore::new(key.public().to_peer_id());
+                let kademlia = kad::Behaviour::with_config(key.public().to_peer_id(), store, cfg);
 
                 Ok(MyBehaviour { gossipsub, mdns, kademlia, identify })
             })?
@@ -124,14 +139,14 @@ impl P2PNetwork {
         swarm.listen_on(format!("/ip4/0.0.0.0/tcp/{}", port).parse()?)?;
 
         let (command_tx, mut command_rx) = mpsc::channel(64);
-        let (message_tx, _) = broadcast::channel(1024);
-        let (connection_closed_tx, _) = broadcast::channel(1024);
+        let (subscribe_message_tx, _) = broadcast::channel(1024);
+        let (connection_closed_message_tx, _) = broadcast::channel(1024);
 
-        let _message_tx_clone = message_tx.clone();
-        let connection_closed_tx_clone = connection_closed_tx.clone();
+        let subscribe_message_tx_clone = subscribe_message_tx.clone();
+        let connection_closed_message_tx_clone = connection_closed_message_tx.clone();
         let mut timer = interval(Duration::from_secs(10));
-        let full_addresses = Arc::new(RwLock::new(Vec::new()));
-        let full_addresses_clone = full_addresses.clone();
+        let full_addrs = Arc::new(RwLock::new(Vec::new()));
+        let full_addrs_clone = full_addrs.clone();
 
         tokio::spawn(async move {
             loop {
@@ -146,19 +161,23 @@ impl P2PNetwork {
                             SwarmCommand::ConnectPeer(addr, result_tx) => {
                                 let dial_result = match swarm.dial(addr) {
                                     Ok(_) => Ok(()),
-                                    Err(e) => Err(anyhow::Error::new(e)),
+                                    Err(e) => {
+                                        println!("ConnectPeer err {:?}", e);
+                                        Err(anyhow::Error::new(e))
+                                    },
                                 };
                                 let _ = result_tx.send(dial_result);
                             },
                             SwarmCommand::PublishMessage(message, result_tx) => {
                                 let timestamp = Utc::now().to_rfc3339_opts(SecondsFormat::Nanos, true);
                                 let timestamp_bytes = timestamp.as_bytes();
+
                                 let mut message_with_timestamp = message.clone();
                                 message_with_timestamp.extend_from_slice(b"@");
                                 message_with_timestamp.extend_from_slice(timestamp_bytes);
 
                                 let publish_result = swarm.behaviour_mut().gossipsub.publish(topic.clone(), message_with_timestamp);
-                                let result = publish_result.map(|_| ()).map_err(|e| anyhow::Error::new(e));
+                                let result = publish_result.map(|_message_id| ()).map_err(|e| anyhow::Error::new(e));
                                 let _ = result_tx.send(result);
                             },
                             SwarmCommand::GetConnectedPeers(result_tx) => {
@@ -171,7 +190,7 @@ impl P2PNetwork {
                         }
                     },
                     event = swarm.select_next_some() => match event {
-                        SwarmEvent::Behaviour(MyBehaviourEvent::Identify(identify::Event::Sent { .. }) ) => {},
+                        SwarmEvent::Behaviour(MyBehaviourEvent::Identify(identify::Event::Sent { peer_id: _, .. })) => {},
                         SwarmEvent::Behaviour(MyBehaviourEvent::Identify(identify::Event::Received { peer_id, info })) => {
                             for address in info.listen_addrs.iter() {
                                 swarm.behaviour_mut().kademlia.add_address(&peer_id, address.clone());
@@ -184,61 +203,84 @@ impl P2PNetwork {
                             }
                         },
                         SwarmEvent::Behaviour(MyBehaviourEvent::Mdns(mdns::Event::Expired(list))) => {
-                            for (peer_id, _) in list {
+                            for (peer_id, _multiaddr) in list {
                                 swarm.behaviour_mut().gossipsub.remove_explicit_peer(&peer_id);
                             }
                         },
-                        SwarmEvent::Behaviour(MyBehaviourEvent::Kademlia(kad::Event::OutboundQueryProgressed { result, step: ProgressStep { last, .. }, .. })) => {
+                        SwarmEvent::Behaviour(MyBehaviourEvent::Kademlia(kad::Event::OutboundQueryProgressed { result, step: ProgressStep { count: _, last }, .. })) => {
                             match result {
                                 kad::QueryResult::GetClosestPeers(Ok(ok)) => {
-                                    if ok.peers.is_empty() && last {
-                                        println!("Failed to find peer on DHT");
+                                    if ok.peers.is_empty() {
+                                        println!("Query finished with no closest peers.");
+                                        if last {
+                                            println!("Failed to find peer on DHT");
+                                        }
                                     }
-                                    println!("Closest peers: {:#?}", ok.peers);
-                                },
-                                _ => {},
+                                    println!("Query finished with closest peers: {:#?}", ok.peers);
+                                }
+                                _ => {}
                             }
                         },
+                        SwarmEvent::Behaviour(MyBehaviourEvent::Kademlia(kad::Event::RoutingUpdated { peer: _, is_new_peer: _, addresses: _, old_peer: _, .. })) => {},
+                        SwarmEvent::Behaviour(MyBehaviourEvent::Kademlia(kad::Event::UnroutablePeer { peer: _ })) => {},
+                        SwarmEvent::Behaviour(MyBehaviourEvent::Kademlia(kad::Event::RoutablePeer { peer: _peer_id, address: _multiaddr })) => {},
+                        SwarmEvent::Behaviour(MyBehaviourEvent::Kademlia(kad::Event::PendingRoutablePeer { peer: _peer_id, address: _multiaddr })) => {},
+                        SwarmEvent::Behaviour(MyBehaviourEvent::Gossipsub(gossipsub::Event::Message { propagation_source: peer_id, message_id: _id, message })) => {
+                            let message_with_timestamp = message.data.clone();
+                            if let Some(position) = message_with_timestamp.iter().rposition(|&x| x == b'@') {
+                                let original_message = message_with_timestamp[..position].to_vec();
+                                let message_event = MessageEvent {
+                                    source: peer_id,
+                                    content: Vec::from(original_message),
+                                };
+                                let res = subscribe_message_tx_clone.send(message_event);
+                                match res {
+                                    Ok(_) => {}
+                                    Err(_e) => {}
+                                }
+                            } else {
+                                println!("'@' not found in the message_with_timestamp");
+                            }
+                        }
                         SwarmEvent::NewListenAddr { address, .. } => {
                             let full_addr = format!("{}/p2p/{}", address, swarm.local_peer_id());
                             println!("Full address: {}", full_addr);
-                            let mut addrs = full_addresses_clone.write().await;
+                            let mut addrs = full_addrs_clone.write().await;
                             addrs.push(full_addr);
-                        },
-                        SwarmEvent::ConnectionEstablished { peer_id, .. } => {
-                            let res = connection_closed_tx_clone.send(peer_id);
-                            if let Err(e) = res {
-                                println!("Connection closed error: {:?}", e);
+                        }
+                        SwarmEvent::ConnectionEstablished { peer_id: _, endpoint: _, num_established: _, concurrent_dial_errors: _, established_in: _, connection_id: _ } => {},
+                        SwarmEvent::ConnectionClosed { peer_id, connection_id: _, endpoint: _, num_established: _, cause: _ } => {
+                            let res = connection_closed_message_tx_clone.send(peer_id);
+                            match res {
+                                Ok(_) => {}
+                                Err(_e) => {}
                             }
-                        },
-                        SwarmEvent::ConnectionClosed { peer_id, .. } => {
-                            let res = connection_closed_tx_clone.send(peer_id);
-                            if let Err(e) = res {
-                                println!("Connection closed error: {:?}", e);
+                        }
+                        SwarmEvent::OutgoingConnectionError { peer_id, connection_id: _, error: _ } => {
+                            match peer_id {
+                                None => {}
+                                Some(_p) => {}
                             }
-                        },
-                        SwarmEvent::OutgoingConnectionError { peer_id, .. } => {
-                            if let Some(p) = peer_id {
-                                println!("Outgoing connection error: {:?}", p);
-                            }
-                        },
-                        _ => {},
+                        }
+                        _ => {}
                     }
                 }
             }
         });
 
-        Ok(P2PNetwork {
+        let p2p_network = P2PNetwork {
             peer_id: local_peer_id,
             command_tx,
-            message_tx,
-            connection_closed_tx,
-            full_addresses,
+            subscribe_message_tx,
+            connection_closed_message_tx,
+            full_addrs,
             topic_name,
-        })
+        };
+
+        Ok(p2p_network)
     }
 
-    /// Connect to a peer.
+    /// Connects to a peer at the given address.
     ///
     /// # Arguments
     ///
@@ -246,7 +288,7 @@ impl P2PNetwork {
     ///
     /// # Returns
     ///
-    /// A Result indicating success or failure.
+    /// A result indicating success or failure.
     pub async fn connect_to_peer(&self, addr: &str) -> Result<(), anyhow::Error> {
         let addr = addr.parse::<Multiaddr>().context("Error parsing Multiaddr")?;
         let (tx, rx) = oneshot::channel();
@@ -254,7 +296,7 @@ impl P2PNetwork {
         rx.await.context("Error waiting for connection response")?
     }
 
-    /// Publish a message to the network.
+    /// Publishes a message to the network.
     ///
     /// # Arguments
     ///
@@ -262,69 +304,68 @@ impl P2PNetwork {
     ///
     /// # Returns
     ///
-    /// A Result indicating success or failure.
+    /// A result indicating success or failure.
     pub async fn publish_message(&self, message: Vec<u8>) -> Result<(), anyhow::Error> {
         let (tx, rx) = oneshot::channel();
         self.command_tx.send(SwarmCommand::PublishMessage(message, tx)).await.context("Error sending publish message command")?;
         rx.await.context("Error waiting for message response to be published")?
     }
 
-    /// Get a list of PeerId's of all peer nodes that are currently directly connected.
+    /// Gets a list of PeerIds of all peer nodes that are currently directly connected.
     ///
     /// # Returns
     ///
-    /// A Result containing a HashSet of connected PeerId's or an error.
+    /// A result containing a set of connected PeerIds or an error.
     pub async fn get_connected_peers(&self) -> Result<HashSet<PeerId>, anyhow::Error> {
         let (tx, rx) = oneshot::channel();
         self.command_tx.send(SwarmCommand::GetConnectedPeers(tx)).await.context("Error sending get connected peers command")?;
         rx.await.context("Error waiting for get connected peers response")?
     }
 
-    /// Subscribe to messages on the network.
+    /// Subscribes to message events.
     ///
     /// # Returns
     ///
-    /// A broadcast receiver for MessageEvent's.
+    /// A receiver for the message events.
     pub fn subscribe_to_messages(&self) -> broadcast::Receiver<MessageEvent> {
-        self.message_tx.subscribe()
+        self.subscribe_message_tx.subscribe()
     }
 
-    /// Listen for connection closed events.
+    /// Listens for connection closed events.
     ///
     /// # Returns
     ///
-    /// A broadcast receiver for PeerId's.
+    /// A receiver for the connection closed events.
     pub fn listen_connection_closed(&self) -> broadcast::Receiver<PeerId> {
-        self.connection_closed_tx.subscribe()
+        self.connection_closed_message_tx.subscribe()
     }
 
-    /// Get the closest peers to a given PeerId.
+    /// Gets the closest peers to the given peer ID.
     ///
     /// # Arguments
     ///
-    /// * `peer_id_str` - The string representation of the PeerId.
+    /// * `peer_id_str` - The peer ID string to search for.
     ///
     /// # Returns
     ///
-    /// A Result indicating success or failure.
+    /// A result indicating success or failure.
     pub async fn get_closest_peers(&self, peer_id_str: &str) -> Result<(), anyhow::Error> {
-        let peer_id = PeerId::from_str(peer_id_str)
-            .context(format!("Error parsing PeerId from string: {}", peer_id_str))?;
+        let peer_id = PeerId::from_str(peer_id_str).context(format!("Error parsing PeerId from string: {}", peer_id_str))?;
         self.command_tx.send(SwarmCommand::GetClosestPeers(peer_id)).await.context("Error sending get closest peers command")?;
         Ok(())
     }
 }
 
 impl P2PNetwork {
-    /// Extract the PeerId from a Multiaddr.
+    /// Extracts the peer ID from a given multiaddress.
     ///
     /// # Arguments
     ///
-    /// * `addr` - The Multiaddr to extract the PeerId from.
+    /// * `addr` - The multiaddress to extract the peer ID from.
     ///
     /// # Returns
     ///
-    /// An Option containing the PeerId if found, or None if not.
+    /// An option containing the peer ID if found.
     fn extract_peer_id_from_multiaddr(addr: &Multiaddr) -> Option<PeerId> {
         for protocol in addr.iter() {
             if let Protocol::P2p(hash) = protocol {

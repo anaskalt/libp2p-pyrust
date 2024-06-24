@@ -172,7 +172,7 @@ fn get_host_addrs(py: Python<'_>) -> PyResult<&PyAny> {
     pyo3_asyncio::tokio::future_into_py(py, async move {
         let network = tp.lock().await;
         if let Some(network) = &*network {
-            let addrs = network.full_addresses.read().await;
+            let addrs = network.full_addrs.read().await;
             Python::with_gil(|py| {
                 Ok(addrs.clone().into_iter().map(|peer| peer.to_string()).collect::<Vec<String>>().into_py(py))
             })
