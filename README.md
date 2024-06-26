@@ -1,43 +1,36 @@
-libp2p_pyrust
-=============
+# libp2p_pyrust
 
 A Rust-based P2P networking library with Python bindings.
 
-Project Structure
------------------
+## Project Structure
 
 - `src/`: Contains the Rust source code.
 - `tests/`: Contains the test cases.
 - `Cargo.toml`: Rust project configuration file.
 - `setup.py`: Python package setup file.
-- `README.rst`: Project documentation.
+- `README.md`: Project documentation.
 
-Author
-------
+## Author
 
 - **Anastasios Kaltakis** - [anastasioskaltakis@gmail.com](mailto:anastasioskaltakis@gmail.com)
 
-Why Use libp2p_pyrust?
-----------------------
+## Why Use libp2p_pyrust?
 
 - **Performance**: Leverages Rust's performance and safety features.
 - **Ease of Use**: Provides Python bindings for ease of use in Python projects.
 - **Scalability**: Built on the libp2p library, designed for building peer-to-peer applications.
 
-Installation
-------------
+## Installation
 
 To install libp2p_pyrust, you can use pip:
 
-.. code-block:: bash
+```bash
+pip install libp2p_pyrust
+```
 
-    pip install libp2p_pyrust
+## Usage
 
-Usage
------
-
-Python Functions
-~~~~~~~~~~~~~~~~
+### Python Functions
 
 - `init_global_p2p_network(bootnodes: List[str], port: int, key_path: str, topic_name: str) -> None`: Initializes the P2P network.
 - `get_global_connected_peers() -> List[str]`: Retrieves the list of connected peers.
@@ -50,45 +43,43 @@ Python Functions
 - `sign_data(file_path: str, data: bytes) -> str`: Signs data using a key pair from a file.
 - `get_serialize_public_key(path: str) -> str`: Retrieves and serializes the public key.
 
-Example Usage
-~~~~~~~~~~~~~
+### Example Usage
 
 Here is an example usage of the libp2p_pyrust library in a chat-like application:
 
-.. code-block:: python
+```python
+import asyncio
+import libp2p_pyrust as libp2p
+import aioconsole
 
-    import asyncio
-    import libp2p_pyrust as libp2p
-    import aioconsole
+def my_callback(message):
+    print("Received message:", message)
 
-    def my_callback(message):
-        print("Received message:", message)
+async def subscribe_task():
+    await libp2p.subscribe_to_messages(my_callback)
 
-    async def subscribe_task():
-        await libp2p.subscribe_to_messages(my_callback)
+async def send_messages():
+    while True:
+        message = await aioconsole.ainput("Enter message: ")
+        await libp2p.publish_message(message.encode())
 
-    async def send_messages():
-        while True:
-            message = await aioconsole.ainput("Enter message: ")
-            await libp2p.publish_message(message.encode())
+async def main():
+    libp2p.generate_ed25519_keypair("node.key")
+    bootnodes = ["/ip4/127.0.0.1/udp/5000/quic-v1/p2p/12D3KooWSYoEJBh6UtfAT8wdepcvH2sjVGUrSFjgsofZwvNWgFPe"]
+    await libp2p.init_global_p2p_network(bootnodes, 0, "node.key", "example-topic-name")
+    await asyncio.sleep(10)
+    host_addrs = await libp2p.get_host_addrs()
+    print("Host addresses: ", host_addrs)
+    connected_peers = await libp2p.get_global_connected_peers()
+    print("Connected peers:", connected_peers)
 
-    async def main():
-        libp2p.generate_ed25519_keypair("node.key")
-        bootnodes = ["/ip4/127.0.0.1/udp/5000/quic-v1/p2p/12D3KooWSYoEJBh6UtfAT8wdepcvH2sjVGUrSFjgsofZwvNWgFPe"]
-        await libp2p.init_global_p2p_network(bootnodes, 0, "node.key", "example-topic-name")
-        await asyncio.sleep(10)
-        host_addrs = await libp2p.get_host_addrs()
-        print("Host addresses: ", host_addrs)
-        connected_peers = await libp2p.get_global_connected_peers()
-        print("Connected peers:", connected_peers)
+    asyncio.create_task(subscribe_task())
+    await send_messages()
 
-        asyncio.create_task(subscribe_task())
-        await send_messages()
+if __name__ == "__main__":
+    asyncio.run(main())
+```
 
-    if __name__ == "__main__":
-        asyncio.run(main())
-
-License
--------
+## License
 
 This project is licensed under the MIT License - see the `LICENSE` file for details.
