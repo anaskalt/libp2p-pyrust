@@ -4,7 +4,7 @@ libp2p_pyrust
 A Rust-based P2P networking library with Python bindings.
 
 Project Structure
-------------------
+-----------------
 
 - `src/`: Contains the Rust source code.
 - `tests/`: Contains the test cases.
@@ -31,12 +31,13 @@ To install libp2p_pyrust, you can use pip:
 
 .. code-block:: bash
 
-    pip3 install libp2p_pyrust
+    pip install libp2p_pyrust
 
 Usage
 -----
 
-### Python Functions
+Python Functions
+~~~~~~~~~~~~~~~~
 
 - `init_global_p2p_network(bootnodes: List[str], port: int, key_path: str, topic_name: str) -> None`: Initializes the P2P network.
 - `get_global_connected_peers() -> List[str]`: Retrieves the list of connected peers.
@@ -49,7 +50,8 @@ Usage
 - `sign_data(file_path: str, data: bytes) -> str`: Signs data using a key pair from a file.
 - `get_serialize_public_key(path: str) -> str`: Retrieves and serializes the public key.
 
-### Example Usage
+Example Usage
+~~~~~~~~~~~~~
 
 Here is an example usage of the libp2p_pyrust library in a chat-like application:
 
