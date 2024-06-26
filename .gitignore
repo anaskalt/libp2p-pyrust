@@ -121,3 +121,5 @@ cython_debug/
 /target/
 Cargo.lock
 
+# Node key
+node.key
