@@ -10,10 +10,6 @@ A Rust-based P2P networking library with Python bindings.
 - `setup.py`: Python package setup file.
 - `README.md`: Project documentation.
 
-## Author
-
-- **Anastasios Kaltakis** - [anastasioskaltakis@gmail.com](mailto:anastasioskaltakis@gmail.com)
-
 ## Why Use libp2p_pyrust?
 
 - **Performance**: Leverages Rust's performance and safety features.
@@ -79,6 +75,9 @@ async def main():
 if __name__ == "__main__":
     asyncio.run(main())
 ```
+## Author
+
+- **Anastasios Kaltakis** - [anastasioskaltakis@gmail.com](mailto:anastasioskaltakis@gmail.com)
 
 ## License
 
