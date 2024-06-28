@@ -101,6 +101,35 @@ jobs:
         python-version: '3.11'
         architecture: ${{ matrix.python-architecture || 'x64' }}
 
+    - name: set up node
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: install cross compilers
+      if: matrix.target == 'i686' || matrix.target == 'aarch64' || matrix.target == 'armv7' || matrix.target == 'ppc64le' || matrix.target == 's390x'
+      run: sudo apt-get install -y gcc-${{ matrix.target }}-linux-gnu
+
+    - name: set CC environment variable
+      if: matrix.target == 'i686'
+      run: echo "CC=i686-linux-gnu-gcc" >> $GITHUB_ENV
+
+    - name: set CC environment variable
+      if: matrix.target == 'aarch64'
+      run: echo "CC=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+
+    - name: set CC environment variable
+      if: matrix.target == 'armv7'
+      run: echo "CC=arm-linux-gnueabihf-gcc" >> $GITHUB_ENV
+
+    - name: set CC environment variable
+      if: matrix.target == 'ppc64le'
+      run: echo "CC=powerpc64le-linux-gnu-gcc" >> $GITHUB_ENV
+
+    - name: set CC environment variable
+      if: matrix.target == 's390x'
+      run: echo "CC=s390x-linux-gnu-gcc" >> $GITHUB_ENV
+
     - name: build sdist
       if: ${{ matrix.os == 'linux' && matrix.target == 'x86_64' }}
       uses: PyO3/maturin-action@v1
@@ -124,7 +153,6 @@ jobs:
     needs: [check, build]
     if: ${{ success() && startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest
-    environment: release
 
     permissions:
       id-token: write
@@ -136,5 +164,6 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: dist/*.whl, dist/*.tar.gz
+          body_path: CHANGELOG.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
