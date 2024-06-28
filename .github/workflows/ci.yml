@@ -19,6 +19,10 @@ jobs:
       with:
         python-version: '3.11'
 
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
     - run: pip install -r tests/requirements-linting.txt
 
     - name: install rust
@@ -97,8 +101,6 @@ jobs:
         python-version: '3.11'
         architecture: ${{ matrix.python-architecture || 'x64' }}
 
-    - run: pip install -U twine
-
     - name: build sdist
       if: ${{ matrix.os == 'linux' && matrix.target == 'x86_64' }}
       uses: PyO3/maturin-action@v1
@@ -110,7 +112,7 @@ jobs:
       uses: PyO3/maturin-action@v1
       with:
         target: ${{ matrix.target }}
-        manylinux: ${{ matrix.manylinux || 'auto' }}
+        manylinux: manylinux_2_28
         args: --release --out dist --interpreter ${{ matrix.interpreter || '3.8 3.9 3.10 3.11 3.12' }}
         rust-toolchain: stable
         docker-options: -e CI
