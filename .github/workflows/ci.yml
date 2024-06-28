@@ -118,11 +118,9 @@ jobs:
         # see https://github.com/PyO3/maturin/issues/2110
         XWIN_VERSION: '16'
 
-    - run: ${{ (matrix.os == 'windows' && 'dir') || 'ls -lh' }} dist/
-
   release:
     needs: [check, build]
-    if: success() && startsWith(github.ref, 'refs/tags/')
+    if: ${{ success() && startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest
     environment: release
 
