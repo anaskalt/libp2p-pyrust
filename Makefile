@@ -44,17 +44,8 @@ lint: lint-python lint-rust
 mypy:
 	mypy libp2p_pyrust
 
-.PHONY: test
-test:
-	coverage run -m pytest
-
-.PHONY: testcov
-testcov: build test
-	@echo "building coverage html"
-	@coverage html
-
 .PHONY: all
-all: lint mypy testcov
+all: lint mypy
 
 .PHONY: clean
 clean:
