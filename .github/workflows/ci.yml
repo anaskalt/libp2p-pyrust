@@ -49,19 +49,6 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target:
-          - platform: x86_64
-            manylinux: "auto"
-          - platform: i686
-            manylinux: "auto"
-          - platform: aarch64
-            manylinux: "manylinux_2_28-cross"
-          - platform: armv7
-            manylinux: "auto"
-          - platform: s390x
-            manylinux: "auto"
-          - platform: ppc64le
-            manylinux: "auto"
         include:
           - os: linux
             target: x86_64
