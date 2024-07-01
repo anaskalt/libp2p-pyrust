@@ -8,6 +8,7 @@ from .libp2p_pyrust import (
     get_serialize_public_key,
     init_global_p2p_network,
     publish_message,
+    send_direct_message,
     sign_data,
     subscribe_to_messages,
 )
@@ -18,6 +19,7 @@ __all__ = [
     'connect_to_peer',
     'publish_message',
     'subscribe_to_messages',
+    'send_direct_message',
     'get_host_addrs',
     'get_peer_id',
     'generate_ed25519_keypair',
