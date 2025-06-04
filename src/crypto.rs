@@ -33,9 +33,7 @@ pub fn save_keypair_to_file(keypair: &identity::Keypair, file_path: String) -> s
         path
     };
 
-    let keypair_bytes = keypair
-        .to_protobuf_encoding()
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let keypair_bytes = keypair.to_protobuf_encoding().map_err(std::io::Error::other)?;
 
     let mut file = File::create(path)?;
     file.write_all(&keypair_bytes)?;
@@ -54,8 +52,7 @@ pub fn load_keypair_from_file(file_path: String) -> std::io::Result<identity::Ke
     let mut file = File::open(path)?;
     let mut keypair_bytes = Vec::new();
     file.read_to_end(&mut keypair_bytes)?;
-    let keypair = identity::Keypair::from_protobuf_encoding(&keypair_bytes)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let keypair = identity::Keypair::from_protobuf_encoding(&keypair_bytes).map_err(std::io::Error::other)?;
     Ok(keypair)
 }
 
@@ -69,9 +66,7 @@ pub fn load_keypair_from_file(file_path: String) -> std::io::Result<identity::Ke
 /// The signature as a base64 encoded string, or an I/O error if it fails.
 pub fn sign_data_with_key(file_path: String, data: Vec<u8>) -> std::io::Result<String> {
     let keypair = load_keypair_from_file(file_path)?;
-    let signature = keypair
-        .sign(&data)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+    let signature = keypair.sign(&data).map_err(|e| std::io::Error::other(e.to_string()))?;
     Ok(STANDARD.encode(signature))
 }
 

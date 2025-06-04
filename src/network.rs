@@ -114,7 +114,7 @@ impl P2PNetwork {
                     .validation_mode(gossipsub::ValidationMode::Strict)
                     .message_id_fn(message_id_fn)
                     .build()
-                    .map_err(|msg| io::Error::new(io::ErrorKind::Other, msg))?;
+                    .map_err(io::Error::other)?;
 
                 let gossipsub =
                     gossipsub::Behaviour::new(gossipsub::MessageAuthenticity::Signed(key.clone()), gossipsub_config)?;
