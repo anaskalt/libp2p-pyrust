@@ -57,43 +57,55 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Linux platform matrix with comprehensive architecture coverage
+          # Core Linux platforms - Primary distributions and architectures
           - os: linux
             target: x86_64
-          - os: linux
-            target: aarch64
+            interpreter: 3.8 3.9 3.10 3.11 3.12
           - os: linux
             target: i686
+            interpreter: 3.8 3.9 3.10 3.11 3.12
+
+          # Linux ARM64 with enhanced ring library compatibility
+          - os: linux
+            target: aarch64
+            interpreter: 3.8 3.9 3.10 3.11 3.12
+            ring_workaround: true
+
+          # Linux ARMv7 for embedded and Raspberry Pi systems
           - os: linux
             target: armv7
-          - os: linux
-            target: ppc64le
-          - os: linux
-            target: s390x
+            interpreter: 3.8 3.9 3.10 3.11 3.12
 
-          # Linux musllinux variants for Alpine and embedded systems
+          # Linux musllinux variants for Alpine and containerized environments
           - os: linux
             manylinux: musllinux_1_1
             target: x86_64
+            interpreter: 3.8 3.9 3.10 3.11 3.12
           - os: linux
             manylinux: musllinux_1_1
             target: aarch64
+            interpreter: 3.8 3.9 3.10 3.11 3.12
+            ring_workaround: true
 
-          # macOS platform matrix for Intel and Apple Silicon architectures
+          # macOS platforms - Full Intel and Apple Silicon support
           - os: macos
             target: x86_64
+            interpreter: 3.8 3.9 3.10 3.11 3.12
           - os: macos
             target: aarch64
+            interpreter: 3.8 3.9 3.10 3.11 3.12
 
-          # Windows platform matrix with enhanced architecture support
+          # Windows platforms - Stable x86_64 and i686 support
           - os: windows
             target: x86_64
+            interpreter: 3.8 3.9 3.10 3.11 3.12
           - os: windows
             target: i686
             python-architecture: x86
-          - os: windows
-            target: aarch64
             interpreter: 3.8 3.9 3.10 3.11 3.12
+
+          # Note: Windows ARM64, ppc64le, and s390x excluded due to ring library compatibility issues
+          # These can be re-enabled when ring library or alternative crypto implementation supports them
 
     runs-on: ${{ (matrix.os == 'linux' && 'ubuntu') || matrix.os }}-latest
 
@@ -107,6 +119,14 @@ jobs:
         python-version: '3.11'
         architecture: ${{ matrix.python-architecture || 'x64' }}
 
+    - name: ARM64 Ring Library Compatibility Configuration
+      if: ${{ matrix.ring_workaround }}
+      run: |
+        # Configure ARM64-specific build environment for ring library compatibility
+        echo "CFLAGS_aarch64_unknown_linux_gnu=-D__ARM_ARCH=8" >> $GITHUB_ENV
+        echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+        echo "AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar" >> $GITHUB_ENV
+
     - name: Source Distribution Generation
       if: ${{ matrix.os == 'linux' && matrix.target == 'x86_64' && !matrix.manylinux }}
       uses: PyO3/maturin-action@v1
@@ -119,11 +139,14 @@ jobs:
       with:
         target: ${{ matrix.target }}
         manylinux: ${{ matrix.manylinux || 'auto' }}
-        args: --release --out dist --interpreter ${{ matrix.interpreter || '3.8 3.9 3.10 3.11 3.12' }}
+        args: --release --out dist --interpreter ${{ matrix.interpreter }}
         rust-toolchain: stable
         docker-options: -e CI
       env:
-        XWIN_VERSION: '16'
+        # Enhanced compatibility environment variables
+        CARGO_BUILD_TARGET: ${{ matrix.target }}-${{ matrix.os == 'linux' && 'unknown-linux-gnu' || matrix.os == 'macos' && 'apple-darwin' || matrix.os == 'windows' && 'pc-windows-msvc' }}
+        # ARM64 specific configurations
+        CFLAGS_aarch64_unknown_linux_gnu: ${{ matrix.ring_workaround && '-D__ARM_ARCH=8' || '' }}
 
     - name: Build Artifact Preservation
       uses: actions/upload-artifact@v4
@@ -171,6 +194,22 @@ jobs:
           echo ""
           echo "Platform Architecture Coverage:"
           find collected-wheels/ -name '*.whl' | grep -o -E '(linux_[^-]+|macosx_[^-]+|win[^-]+)' | sort -u
+          echo ""
+          echo "=== Supported Platform Matrix ==="
+          echo "✅ Linux x86_64: Primary server and desktop platform"
+          echo "✅ Linux i686: Legacy 32-bit system support"
+          echo "✅ Linux aarch64: ARM64 servers and modern devices"
+          echo "✅ Linux armv7: Raspberry Pi and embedded systems"
+          echo "✅ Linux musllinux: Alpine Linux and container environments"
+          echo "✅ macOS x86_64: Intel-based Mac systems"
+          echo "✅ macOS aarch64: Apple Silicon (M1/M2/M3) systems"
+          echo "✅ Windows x86_64: Modern 64-bit Windows systems"
+          echo "✅ Windows i686: Legacy 32-bit Windows systems"
+          echo ""
+          echo "⚠️  Excluded Architectures (ring library compatibility):"
+          echo "   - Windows ARM64: Ring compilation issues with MSVC"
+          echo "   - Linux ppc64le: Limited ring library support"
+          echo "   - Linux s390x: Limited ring library support"
 
       - name: Enhanced Release Documentation Generation
         run: |
@@ -186,35 +225,39 @@ jobs:
 
           ### Linux Systems
           ```bash
-          # x86_64 Architecture (Most Common)
+          # x86_64 Architecture (Most Common - Servers, Desktops)
           pip install libp2p_pyrust-*-linux_x86_64.whl
 
-          # ARM64 Architecture (Raspberry Pi, ARM Servers)
+          # ARM64 Architecture (ARM Servers, Modern ARM devices)
           pip install libp2p_pyrust-*-linux_aarch64.whl
 
-          # Alpine Linux and Embedded Systems
+          # ARMv7 Architecture (Raspberry Pi, Embedded systems)
+          pip install libp2p_pyrust-*-linux_armv7l.whl
+
+          # 32-bit x86 Architecture (Legacy systems)
+          pip install libp2p_pyrust-*-linux_i686.whl
+
+          # Alpine Linux and Container Environments
           pip install libp2p_pyrust-*-musllinux_1_1_x86_64.whl
+          pip install libp2p_pyrust-*-musllinux_1_1_aarch64.whl
           ```
 
           ### macOS Systems
           ```bash
-          # Intel-based Macs
+          # Intel-based Macs (Pre-2020 systems)
           pip install libp2p_pyrust-*-macosx_*_x86_64.whl
 
-          # Apple Silicon Macs (M1, M2, M3)
+          # Apple Silicon Macs (M1, M2, M3 - 2020 and later)
           pip install libp2p_pyrust-*-macosx_*_arm64.whl
           ```
 
           ### Windows Systems
           ```bash
-          # 64-bit Windows (Most Common)
+          # 64-bit Windows (Windows 10/11 - Most Common)
           pip install libp2p_pyrust-*-win_amd64.whl
 
-          # 32-bit Windows
+          # 32-bit Windows (Legacy Windows systems)
           pip install libp2p_pyrust-*-win32.whl
-
-          # Windows ARM64 (Surface Pro X, ARM-based devices)
-          pip install libp2p_pyrust-*-win_arm64.whl
           ```
 
           ## Quick Start Example
@@ -288,73 +331,113 @@ jobs:
               print(f"Direct message failed: {direct_message_error}")
           ```
 
-          ## Platform Compatibility Matrix
+          ## Comprehensive Platform Compatibility Matrix
 
-          | Operating System | Architecture | Python Versions | Installation Status |
-          |-----------------|-------------|-----------------|-------------------|
-          | Ubuntu/Debian | x86_64 | 3.8 - 3.12 | Fully Supported |
-          | Ubuntu/Debian | aarch64 | 3.8 - 3.12 | Fully Supported |
-          | CentOS/RHEL | x86_64 | 3.8 - 3.12 | Fully Supported |
-          | Alpine Linux | x86_64 | 3.8 - 3.12 | Fully Supported |
-          | macOS | Intel (x86_64) | 3.8 - 3.12 | Fully Supported |
-          | macOS | Apple Silicon (ARM64) | 3.8 - 3.12 | Fully Supported |
-          | Windows 10/11 | x86_64 | 3.8 - 3.12 | Fully Supported |
-          | Windows 10/11 | ARM64 | 3.8 - 3.12 | Fully Supported |
+          | Operating System | Architecture | Python Versions | Status | Use Cases |
+          |-----------------|-------------|-----------------|---------|-----------|
+          | Ubuntu/Debian | x86_64 | 3.8 - 3.12 | ✅ Fully Supported | Servers, Desktops, Cloud |
+          | Ubuntu/Debian | aarch64 | 3.8 - 3.12 | ✅ Fully Supported | ARM Servers, Cloud ARM |
+          | Ubuntu/Debian | armv7 | 3.8 - 3.12 | ✅ Fully Supported | Raspberry Pi, IoT |
+          | Ubuntu/Debian | i686 | 3.8 - 3.12 | ✅ Fully Supported | Legacy 32-bit Systems |
+          | Alpine Linux | x86_64 | 3.8 - 3.12 | ✅ Fully Supported | Containers, Docker |
+          | Alpine Linux | aarch64 | 3.8 - 3.12 | ✅ Fully Supported | ARM Containers |
+          | macOS | Intel (x86_64) | 3.8 - 3.12 | ✅ Fully Supported | Intel Mac Development |
+          | macOS | Apple Silicon (ARM64) | 3.8 - 3.12 | ✅ Fully Supported | M1/M2/M3 Mac Development |
+          | Windows 10/11 | x86_64 | 3.8 - 3.12 | ✅ Fully Supported | Modern Windows Development |
+          | Windows | i686 | 3.8 - 3.12 | ✅ Fully Supported | Legacy Windows Systems |
+          | Windows | ARM64 | 3.8 - 3.12 | ⚠️ Not Available | Ring library compatibility |
+          | Linux | ppc64le | 3.8 - 3.12 | ⚠️ Not Available | Limited cryptography support |
+          | Linux | s390x | 3.8 - 3.12 | ⚠️ Not Available | Limited cryptography support |
 
-          ## Installation Verification
+          ## Installation Verification and Troubleshooting
+
+          ### Basic Installation Verification
           ```bash
-          # Verify successful installation and basic functionality
-          python -c "import libp2p_pyrust; print('libp2p-pyrust installation verified')"
+          # Verify successful installation and core functionality
+          python -c "import libp2p_pyrust; print('✅ libp2p-pyrust installation verified')"
 
-          # Display detailed package information
+          # Display comprehensive package information
           pip show libp2p-pyrust
 
-          # Check available functions and version information
-          python -c "import libp2p_pyrust; print(f'Version: {libp2p_pyrust.__version__}')"
-          ```
-
-          ## Troubleshooting Common Installation Issues
-
-          ### Import Error Resolution
-          ```bash
-          # Reinstall with verbose output for debugging
-          pip install --force-reinstall --verbose libp2p-pyrust
-
-          # Verify Python version compatibility
-          python --version
-
-          # Check pip version and upgrade if necessary
-          pip --version
-          pip install --upgrade pip
+          # Test cryptographic key generation (core functionality)
+          python -c "import libp2p_pyrust; libp2p_pyrust.generate_ed25519_keypair('test.key'); print('✅ Core functionality verified')"
           ```
 
           ### Platform-Specific Troubleshooting
 
-          #### Linux Systems
+          #### Linux ARM64 Systems
           ```bash
-          # Install system dependencies for compilation environments
-          sudo apt-get update && sudo apt-get install build-essential
+          # If compilation issues occur, ensure ARM development tools are installed
+          sudo apt-get update && sudo apt-get install build-essential gcc-aarch64-linux-gnu
 
-          # For Alpine Linux, install musl development tools
-          apk add musl-dev gcc
+          # For cross-compilation environments, verify architecture
+          uname -m  # Should show aarch64
           ```
 
-          #### macOS Systems
+          #### Alpine Linux / Container Environments
           ```bash
-          # Install Xcode command line tools if needed
+          # Install required build dependencies for musl systems
+          apk add --no-cache musl-dev gcc python3-dev
+
+          # Verify musl compatibility
+          ldd --version  # Should show musl libc
+          ```
+
+          #### macOS Apple Silicon
+          ```bash
+          # Ensure Xcode command line tools are current
           xcode-select --install
 
-          # Verify architecture compatibility
-          uname -m
+          # Verify architecture detection
+          python -c "import platform; print(platform.machine())"  # Should show arm64
           ```
 
           #### Windows Systems
           ```bash
-          # Verify Windows version compatibility
-          systeminfo | findstr "OS Name"
+          # Verify Python architecture matches system
+          python -c "import platform; print(platform.architecture())"
+
+          # For 32-bit Python on 64-bit Windows, use win32 wheels
+          # For 64-bit Python, use win_amd64 wheels
           ```
 
-          For additional support and documentation, please refer to the project repository.
+          ### Performance Optimization Notes
+
+          #### Network Configuration for Optimal Performance
+          ```python
+          # Configure network parameters for high-throughput scenarios
+          await libp2p.init_global_p2p_network(
+              bootnodes=bootstrap_nodes,
+              port=0,  # Auto-assign for firewall compatibility
+              key_path='node.key',
+              topic_name='high-performance-network'
+          )
+
+          # Monitor connection metrics for performance tuning
+          connected_peers = await libp2p.get_global_connected_peers()
+          host_addresses = await libp2p.get_host_addrs()
+
+          print(f"Network Performance Metrics:")
+          print(f"  Active Connections: {len(connected_peers)}")
+          print(f"  Available Addresses: {len(host_addresses)}")
+          ```
+
+          ## Technical Architecture Notes
+
+          ### Cryptographic Implementation
+          - **Ed25519 Key Generation**: High-performance elliptic curve cryptography
+          - **Noise Protocol Framework**: Secure channel establishment
+          - **Ring Library**: Production-grade cryptographic primitives
+          - **RSA Support**: Legacy compatibility for broader network integration
+
+          ### Network Protocol Stack
+          - **QUIC Transport**: Modern UDP-based transport with built-in encryption
+          - **TCP Fallback**: Reliable connectivity for restrictive network environments
+          - **mDNS Discovery**: Zero-configuration local network peer discovery
+          - **Kademlia DHT**: Distributed hash table for peer routing
+          - **GossipSub**: Efficient publish-subscribe messaging protocol
+
+          For comprehensive documentation and advanced configuration options, refer to the project repository and API documentation.
           EOF
 
       - name: Public GitHub Release Creation
@@ -373,15 +456,23 @@ jobs:
 
       - name: Release Success Notification
         run: |
-          echo "Public Release Successfully Generated!"
+          echo "🚀 Optimized Multi-Platform Release Generated Successfully!"
           echo ""
-          echo "Release Information:"
+          echo "📊 Release Statistics:"
           echo "   Version: ${{ github.ref_name }}"
           echo "   Total Packages: $(find collected-wheels/ -name '*.whl' -o -name '*.tar.gz' | wc -l)"
-          echo "   Release URL: https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}"
+          echo "   Supported Platforms: 9 architecture combinations"
+          echo "   Python Version Range: 3.8 - 3.12"
           echo ""
-          echo "User Installation Command:"
-          echo "   pip install https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/[platform-specific-wheel]"
+          echo "🎯 Platform Coverage:"
+          echo "   ✅ Linux: x86_64, aarch64, armv7, i686 + musllinux variants"
+          echo "   ✅ macOS: Intel x86_64 + Apple Silicon aarch64"
+          echo "   ✅ Windows: x86_64 + i686 (32-bit)"
           echo ""
-          echo "Direct Release Access:"
-          echo "   https://github.com/${{ github.repository }}/releases/latest"
+          echo "📦 Release Access:"
+          echo "   Direct URL: https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}"
+          echo "   Latest: https://github.com/${{ github.repository }}/releases/latest"
+          echo ""
+          echo "👥 User Installation:"
+          echo "   Universal: pip install libp2p-pyrust"
+          echo "   Platform-specific: pip install [wheel-url]"
