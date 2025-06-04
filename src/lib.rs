@@ -5,6 +5,7 @@ pub mod network;
 use network::P2PNetwork;
 
 use lazy_static::lazy_static;
+use libp2p::PeerId;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use std::sync::Arc;
@@ -170,6 +171,41 @@ fn subscribe_to_messages(py: Python, callback: PyObject) -> PyResult<&PyAny> {
     })
 }
 
+/// Sends a direct message to a specific peer.
+///
+/// # Arguments
+///
+/// * `py` - The Python interpreter state.
+/// * `peer_id` - The peer ID to send the message to.
+/// * `message` - The message to send.
+///
+/// # Returns
+///
+/// A Python `None` object on success.
+#[pyfunction]
+fn send_direct_message(py: Python<'_>, peer_id: String, message: Vec<u8>) -> PyResult<&PyAny> {
+    let tp = GLOBAL_P2P_NETWORK.clone();
+    pyo3_asyncio::tokio::future_into_py(py, async move {
+        let network = tp.lock().await;
+        if let Some(network) = &*network {
+            let peer_id = PeerId::from_bytes(
+                &bs58::decode(&peer_id)
+                    .into_vec()
+                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid peer ID: {}", e)))?,
+            )
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid peer ID: {}", e)))?;
+            network.send_direct_message(peer_id, message).await.map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Failed to send direct message: {}", e))
+            })?;
+            Ok(Python::with_gil(|py| py.None()))
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                "P2PNetwork is not initialized",
+            ))
+        }
+    })
+}
+
 /// Retrieves the host addresses of the global P2P network.
 ///
 /// # Arguments
@@ -301,5 +337,6 @@ fn libp2p_pyrust(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_wrapped(wrap_pyfunction!(get_peer_id))?;
     m.add_wrapped(wrap_pyfunction!(sign_data))?;
     m.add_wrapped(wrap_pyfunction!(get_serialize_public_key))?;
+    m.add_wrapped(wrap_pyfunction!(send_direct_message))?;
     Ok(())
 }

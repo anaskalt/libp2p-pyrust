@@ -5,6 +5,7 @@ use libp2p::{
     mdns::{self},
     multiaddr::Protocol,
     noise,
+    request_response::{self, ProtocolSupport},
     swarm::{NetworkBehaviour, SwarmEvent},
     tcp, yamux, Multiaddr, PeerId,
 };
@@ -21,19 +22,28 @@ use tokio::sync::{mpsc, RwLock};
 use tokio::time::{interval, Duration};
 use tokio::{io, select};
 
+use serde::{Deserialize, Serialize};
+
 use pyo3::prelude::*;
 
 use crate::crypto;
 use chrono::{SecondsFormat, Utc};
 use log::{error, info, warn};
 
-/// Network behaviour combining gossipsub, mDNS, Kademlia, and identify protocols.
+// Define the Request and Response types for direct messaging
+#[derive(Debug, Serialize, Deserialize)]
+struct DirectMessage {
+    content: Vec<u8>,
+}
+
+/// Network behaviour combining gossipsub, mDNS, Kademlia, identify, and request-response protocols.
 #[derive(NetworkBehaviour)]
 struct MyBehaviour {
     gossipsub: gossipsub::Behaviour,
     mdns: mdns::tokio::Behaviour,
     kademlia: kad::Behaviour<MemoryStore>,
     identify: identify::Behaviour,
+    request_response: request_response::cbor::Behaviour<DirectMessage, DirectMessage>,
 }
 
 /// Commands that can be sent to the swarm.
@@ -42,6 +52,7 @@ enum SwarmCommand {
     PublishMessage(Vec<u8>, oneshot::Sender<std::result::Result<(), anyhow::Error>>),
     GetConnectedPeers(oneshot::Sender<std::result::Result<HashSet<PeerId>, anyhow::Error>>),
     GetClosestPeers(PeerId),
+    SendDirectMessage(PeerId, Vec<u8>, oneshot::Sender<std::result::Result<(), anyhow::Error>>),
 }
 
 /// Event representing a message received in the network.
@@ -118,11 +129,21 @@ impl P2PNetwork {
                 let store = kad::store::MemoryStore::new(key.public().to_peer_id());
                 let kademlia = kad::Behaviour::with_config(key.public().to_peer_id(), store, cfg);
 
+                let request_response = {
+                    let protocols = vec![(
+                        libp2p::StreamProtocol::new("/direct-message/1.0"),
+                        ProtocolSupport::Full,
+                    )];
+                    let cfg = request_response::Config::default();
+                    request_response::cbor::Behaviour::<DirectMessage, DirectMessage>::new(protocols, cfg)
+                };
+
                 Ok(MyBehaviour {
                     gossipsub,
                     mdns,
                     kademlia,
                     identify,
+                    request_response,
                 })
             })?
             .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(5)))
@@ -197,6 +218,11 @@ impl P2PNetwork {
                             SwarmCommand::GetClosestPeers(peer_id) => {
                                 swarm.behaviour_mut().kademlia.get_closest_peers(peer_id);
                             },
+                            SwarmCommand::SendDirectMessage(peer_id, message, result_tx) => {
+                                let request = DirectMessage { content: message };
+                                let _request_id = swarm.behaviour_mut().request_response.send_request(&peer_id, request);
+                                let _ = result_tx.send(Ok(()));
+                            },
                         }
                     },
                     event = swarm.select_next_some() => match event {
@@ -244,22 +270,53 @@ impl P2PNetwork {
                             } else {
                                 warn!("'@' not found in the message_with_timestamp");
                             }
-                        }
+                        },
+                        SwarmEvent::Behaviour(MyBehaviourEvent::RequestResponse(request_response::Event::Message {
+                            peer,
+                            message: request_response::Message::Request { request, channel, .. },
+                        })) => {
+                            let message_event = MessageEvent {
+                                source: peer,
+                                content: request.content,
+                            };
+                            if let Err(_e) = subscribe_message_tx_clone.send(message_event) {
+                                warn!("Failed to send direct message event");
+                            }
+
+                            // Send an empty response
+                            let response = DirectMessage { content: vec![] };
+                            if let Err(e) = swarm.behaviour_mut().request_response.send_response(channel, response) {
+                                warn!("Failed to send response: {:?}", e);
+                            }
+                        },
+                        SwarmEvent::Behaviour(MyBehaviourEvent::RequestResponse(request_response::Event::OutboundFailure {
+                            peer,
+                            request_id: _,
+                            error,
+                        })) => {
+                            warn!("Outbound request to peer {:?} failed: {:?}", peer, error);
+                        },
+                        SwarmEvent::Behaviour(MyBehaviourEvent::RequestResponse(request_response::Event::ResponseSent {
+                            peer,
+                            request_id: _,
+                        })) => {
+                            info!("Response sent to peer {:?}", peer);
+                        },
                         SwarmEvent::NewListenAddr { address, .. } => {
                             let full_addr = format!("{}/p2p/{}", address, swarm.local_peer_id());
                             info!("Full address: {}", full_addr);
                             let mut addrs = full_addrs_clone.write().await;
                             addrs.push(full_addr);
-                        }
+                        },
                         SwarmEvent::ConnectionEstablished { peer_id: _, endpoint: _, num_established: _, concurrent_dial_errors: _, established_in: _, connection_id: _ } => {},
                         SwarmEvent::ConnectionClosed { peer_id, connection_id: _, endpoint: _, num_established: _, cause: _ } => {
                             if let Err(_e) = connection_closed_message_tx_clone.send(peer_id) {
                                 warn!("Failed to send connection closed event");
                             }
-                        }
+                        },
                         SwarmEvent::OutgoingConnectionError { peer_id: Some(_p), connection_id: _, error: _ } => {
                             warn!("Outgoing connection error with peer: {:?}", _p);
-                        }
+                        },
                         _ => {}
                     }
                 }
@@ -364,6 +421,25 @@ impl P2PNetwork {
             .await
             .context("Error sending get closest peers command")?;
         Ok(())
+    }
+
+    /// Sends a direct message to a specific peer.
+    ///
+    /// # Arguments
+    ///
+    /// * `peer_id` - The PeerId of the recipient.
+    /// * `message` - The message to send.
+    ///
+    /// # Returns
+    ///
+    /// A result indicating success or failure.
+    pub async fn send_direct_message(&self, peer_id: PeerId, message: Vec<u8>) -> Result<(), anyhow::Error> {
+        let (tx, rx) = oneshot::channel();
+        self.command_tx
+            .send(SwarmCommand::SendDirectMessage(peer_id, message, tx))
+            .await
+            .context("Error sending direct message command")?;
+        rx.await.context("Error waiting for direct message response")?
     }
 }
 
