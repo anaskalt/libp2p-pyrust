@@ -18,17 +18,31 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Rust",
     "Intended Audience :: Developers",
     "Intended Audience :: Information Technology",
     "Intended Audience :: System Administrators",
     "License :: OSI Approved :: MIT License",
+
+    # OS support declarations
+    "Operating System :: OS Independent",
     "Operating System :: Unix",
     "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+
+    # Architecture support declarations
+    "Platform :: AMD64",
+    "Platform :: ARM64",
+    "Platform :: x86-64",
+
     "Environment :: Console",
-    "Environment :: MacOS X",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Internet",
+    "Topic :: System :: Networking",
+    "Topic :: Communications",
 ]
+
 dynamic = [
     "description",
     "license",
@@ -38,16 +52,28 @@ dynamic = [
 
 [project.urls]
 Homepage = "https://github.com/anaskalt/libp2p-pyrust"
-Funding = "https://github.com/sponsors/anaskalt"
-Source = "https://github.com/anaskalt/libp2p-pyrust"
+Documentation = "https://github.com/anaskalt/libp2p-pyrust#readme"
+Repository = "https://github.com/anaskalt/libp2p-pyrust"
+"Bug Reports" = "https://github.com/anaskalt/libp2p-pyrust/issues"
+Changelog = "https://github.com/anaskalt/libp2p-pyrust/blob/main/CHANGELOG.md"
 
 [tool.maturin]
 bindings = "pyo3"
 module-name = "libp2p_pyrust.libp2p_pyrust"
 features = ["pyo3/extension-module", "pyo3/generate-import-lib"]
 
+python-source = "libp2p_pyrust"
+strip = true  # Strip debug symbols from release builds
+include = [
+    { path = "libp2p_pyrust/__init__.py", format = "sdist" },
+    { path = "libp2p_pyrust/py.typed", format = "sdist" },
+    { path = "README.md", format = "sdist" },
+    { path = "LICENSE", format = "sdist" },
+]
+
+# Test and development tool configurations
 [tool.coverage.run]
-source = ["libp2p-pyrust"]
+source = ["libp2p_pyrust"]
 branch = true
 
 [tool.coverage.report]
