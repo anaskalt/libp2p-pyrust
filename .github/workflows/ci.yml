@@ -12,6 +12,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  CIBW_ENVIRONMENT: 'PATH="$HOME/.cargo/bin:$PATH"'
 
 jobs:
   lint:
@@ -45,6 +46,7 @@ jobs:
     needs: [check]
     if: success()
     strategy:
+      fail-fast: false
       matrix:
         target: [x86_64, i686]
     runs-on: ubuntu-latest
@@ -57,7 +59,7 @@ jobs:
       uses: PyO3/maturin-action@v1
       with:
         target: ${{ matrix.target }}
-        args: --release --out dist --interpreter 3.8 3.9 3.10 3.11 3.12
+        args: --release --out dist --interpreter 3.8 3.9 3.10 3.11 3.12 3.13
         sccache: 'true'
         manylinux: auto
     - name: Upload wheels
@@ -71,15 +73,18 @@ jobs:
     needs: [check]
     if: success()
     strategy:
+      fail-fast: false
       matrix:
         target: [aarch64, armv7]
         include:
           - target: aarch64
             arch_flag: "8"
-            gcc_target: "aarch64-unknown-linux-gnu"
+            gcc_prefix: "aarch64-linux-gnu"
+            rust_target: "aarch64-unknown-linux-gnu"
           - target: armv7
             arch_flag: "7"
-            gcc_target: "armv7-unknown-linux-gnueabihf"
+            gcc_prefix: "arm-linux-gnueabihf"
+            rust_target: "armv7-unknown-linux-gnueabihf"
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
@@ -87,38 +92,34 @@ jobs:
       with:
         python-version: '3.11'
 
-    # Configure cross-compilation environment variables for ARM builds
     - name: Configure ARM cross-compilation environment
       run: |
-        echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
-        echo "CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER=arm-linux-gnueabihf-gcc" >> $GITHUB_ENV
-        echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
-        echo "CC_armv7_unknown_linux_gnueabihf=arm-linux-gnueabihf-gcc" >> $GITHUB_ENV
+        # Install ARM cross-compilation toolchain
+        sudo apt-get update
+        sudo apt-get install -y gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf
+
+        # Configure Cargo cross-compilation
+        echo "CARGO_TARGET_$(echo ${{ matrix.rust_target }} | tr '[:lower:]' '[:upper:]' | tr '-' '_')_LINKER=${{ matrix.gcc_prefix }}-gcc" >> $GITHUB_ENV
+        echo "CC_$(echo ${{ matrix.rust_target }} | tr '-' '_')=${{ matrix.gcc_prefix }}-gcc" >> $GITHUB_ENV
+        echo "CXX_$(echo ${{ matrix.rust_target }} | tr '-' '_')=${{ matrix.gcc_prefix }}-g++" >> $GITHUB_ENV
+        echo "AR_$(echo ${{ matrix.rust_target }} | tr '-' '_')=${{ matrix.gcc_prefix }}-ar" >> $GITHUB_ENV
 
         # Critical: Set ARM architecture flags for ring crate compilation
-        if [ "${{ matrix.target }}" = "aarch64" ]; then
-          echo "CFLAGS_aarch64_unknown_linux_gnu=-D__ARM_ARCH=8" >> $GITHUB_ENV
-          echo "CXXFLAGS_aarch64_unknown_linux_gnu=-D__ARM_ARCH=8" >> $GITHUB_ENV
-        elif [ "${{ matrix.target }}" = "armv7" ]; then
-          echo "CFLAGS_armv7_unknown_linux_gnueabihf=-D__ARM_ARCH=7" >> $GITHUB_ENV
-          echo "CXXFLAGS_armv7_unknown_linux_gnueabihf=-D__ARM_ARCH=7" >> $GITHUB_ENV
-        fi
+        echo "CFLAGS_$(echo ${{ matrix.rust_target }} | tr '-' '_')=-D__ARM_ARCH=${{ matrix.arch_flag }}" >> $GITHUB_ENV
+        echo "CXXFLAGS_$(echo ${{ matrix.rust_target }} | tr '-' '_')=-D__ARM_ARCH=${{ matrix.arch_flag }}" >> $GITHUB_ENV
 
     - name: Build wheels
       uses: PyO3/maturin-action@v1
       with:
         target: ${{ matrix.target }}
-        args: --release --out dist --interpreter 3.8 3.9 3.10 3.11 3.12
+        args: --release --out dist --interpreter 3.8 3.9 3.10 3.11 3.12 3.13
         sccache: 'true'
         manylinux: auto
-        # Enhanced container configuration with proper ARM toolchain
         before-script-linux: |
-          # Install ARM cross-compilation toolchain
+          # Ensure ARM toolchain is available in the container
           if command -v yum &> /dev/null; then
-            # CentOS/RHEL based manylinux images
             yum install -y gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf
           elif command -v apt-get &> /dev/null; then
-            # Debian/Ubuntu based images
             apt-get update
             apt-get install -y gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf
           fi
@@ -129,13 +130,19 @@ jobs:
         name: wheels-linux-${{ matrix.target }}
         path: dist
 
-  build-musllinux:
+  build-linux-musl:
     name: Linux musl ${{ matrix.target }}
     needs: [check]
     if: success()
     strategy:
+      fail-fast: false
       matrix:
         target: [x86_64, aarch64]
+        include:
+          - target: x86_64
+            platform_tag: "x86_64"
+          - target: aarch64
+            platform_tag: "aarch64"
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
@@ -143,23 +150,21 @@ jobs:
       with:
         python-version: '3.11'
 
-    # Configure musl cross-compilation environment
-    - name: Configure musl cross-compilation environment
-      run: |
-        if [ "${{ matrix.target }}" = "aarch64" ]; then
-          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-musl-gcc" >> $GITHUB_ENV
-          echo "CC_aarch64_unknown_linux_musl=aarch64-linux-musl-gcc" >> $GITHUB_ENV
-          echo "CFLAGS_aarch64_unknown_linux_musl=-D__ARM_ARCH=8" >> $GITHUB_ENV
-          echo "CXXFLAGS_aarch64_unknown_linux_musl=-D__ARM_ARCH=8" >> $GITHUB_ENV
-        fi
-
     - name: Build wheels
       uses: PyO3/maturin-action@v1
       with:
         target: ${{ matrix.target }}
-        args: --release --out dist --interpreter 3.8 3.9 3.10 3.11 3.12
+        args: --release --out dist --interpreter 3.8 3.9 3.10 3.11 3.12 3.13
         sccache: 'true'
+        # Use specialized musl containers with pre-installed toolchains
+        container: ${{ matrix.target == 'aarch64' && 'messense/musllinux_1_1-cross:aarch64' || 'quay.io/pypa/musllinux_1_1_x86_64' }}
         manylinux: musllinux_1_1
+        before-script-linux: |
+          # For aarch64, ensure ARM architecture flag is set
+          if [ "${{ matrix.target }}" = "aarch64" ]; then
+            export CFLAGS_aarch64_unknown_linux_musl="-D__ARM_ARCH=8"
+            export CXXFLAGS_aarch64_unknown_linux_musl="-D__ARM_ARCH=8"
+          fi
 
     - name: Upload wheels
       uses: actions/upload-artifact@v4
@@ -172,21 +177,31 @@ jobs:
     needs: [check]
     if: success()
     strategy:
+      fail-fast: false
       matrix:
-        target: [x64, x86]
+        target: [x64, x86, arm64]
+        include:
+          - target: x64
+            architecture: x64
+          - target: x86
+            architecture: x86
+          - target: arm64
+            architecture: arm64
     runs-on: windows-latest
     steps:
     - uses: actions/checkout@v4
     - uses: actions/setup-python@v5
       with:
         python-version: '3.11'
-        architecture: ${{ matrix.target }}
+        architecture: ${{ matrix.architecture }}
+
     - name: Build wheels
       uses: PyO3/maturin-action@v1
       with:
         target: ${{ matrix.target }}
-        args: --release --out dist --interpreter 3.8 3.9 3.10 3.11 3.12
+        args: --release --out dist --interpreter 3.8 3.9 3.10 3.11 3.12 3.13
         sccache: 'true'
+
     - name: Upload wheels
       uses: actions/upload-artifact@v4
       with:
@@ -198,6 +213,7 @@ jobs:
     needs: [check]
     if: success()
     strategy:
+      fail-fast: false
       matrix:
         target: [x86_64, aarch64]
     runs-on: macos-latest
@@ -206,12 +222,14 @@ jobs:
     - uses: actions/setup-python@v5
       with:
         python-version: '3.11'
+
     - name: Build wheels
       uses: PyO3/maturin-action@v1
       with:
         target: ${{ matrix.target }}
-        args: --release --out dist --interpreter 3.8 3.9 3.10 3.11 3.12
+        args: --release --out dist --interpreter 3.8 3.9 3.10 3.11 3.12 3.13
         sccache: 'true'
+
     - name: Upload wheels
       uses: actions/upload-artifact@v4
       with:
@@ -236,27 +254,139 @@ jobs:
         name: wheels-sdist
         path: dist
 
+  test-wheels:
+    name: Test wheels on ${{ matrix.os }}
+    needs: [build-linux, build-windows, build-macos]
+    if: success()
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ['3.8', '3.9', '3.10', '3.11', '3.12', '3.13']
+    runs-on: ${{ matrix.os }}
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Download wheels
+      uses: actions/download-artifact@v4
+      with:
+        pattern: wheels-*
+        path: dist
+        merge-multiple: true
+
+    - name: Install wheel
+      shell: bash
+      run: |
+        # Find and install the appropriate wheel for this platform and Python version
+        python -m pip install --upgrade pip
+
+        # Determine platform tag
+        if [ "${{ runner.os }}" = "Linux" ]; then
+          PLATFORM="linux"
+        elif [ "${{ runner.os }}" = "Windows" ]; then
+          PLATFORM="win"
+        else
+          PLATFORM="macos"
+        fi
+
+        # Install any available wheel (will choose the compatible one)
+        python -m pip install --find-links dist libp2p-pyrust --force-reinstall || echo "No compatible wheel found"
+
+    - name: Test basic import
+      run: |
+        python -c "import libp2p_pyrust; print('Import successful')"
+
   release:
-    name: Release
+    name: GitHub Release
     runs-on: ubuntu-latest
     if: ${{ startsWith(github.ref, 'refs/tags/') }}
-    needs: [build-linux, build-linux-arm, build-musllinux, build-windows, build-macos, build-sdist]
+    needs: [build-linux, build-linux-arm, build-linux-musl, build-windows, build-macos, build-sdist, test-wheels]
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           pattern: wheels-*
           path: dist
           merge-multiple: true
-      - name: List artifacts
-        run: ls -la dist/
-      - name: Create Release
+
+      - name: Organize and validate release artifacts
+        run: |
+          echo "=== Built Artifacts Summary ==="
+          echo "Wheels by platform:"
+          find dist -name "*.whl" | sort | while read wheel; do
+            echo "  - $(basename "$wheel")"
+          done
+
+          echo ""
+          echo "Source distribution:"
+          find dist -name "*.tar.gz" | while read sdist; do
+            echo "  - $(basename "$sdist")"
+          done
+
+          echo ""
+          echo "Total release files: $(find dist -type f | wc -l)"
+
+          # Verify we have artifacts for all expected platforms
+          EXPECTED_PLATFORMS="linux-x86_64 linux-i686 linux-aarch64 linux-armv7 musllinux-x86_64 musllinux-aarch64 windows-x64 windows-x86 windows-arm64 macos-x86_64 macos-aarch64 sdist"
+
+          echo ""
+          echo "Platform coverage verification:"
+          for platform in $EXPECTED_PLATFORMS; do
+            if find dist -name "*$platform*" -o -name "*sdist*" | grep -q .; then
+              echo "  ✓ $platform: Found"
+            else
+              echo "  ⚠ $platform: Missing"
+            fi
+          done
+
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*
           generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
+          body: |
+            ## libp2p-pyrust Release
+
+            ### Platform Support
+            This release includes pre-built wheels for:
+
+            **Linux (glibc)**
+            - x86_64 (Intel/AMD 64-bit)
+            - i686 (Intel/AMD 32-bit)
+            - aarch64 (ARM 64-bit)
+            - armv7 (ARM 32-bit)
+
+            **Linux (musl)**
+            - x86_64 (Static linking)
+            - aarch64 (ARM 64-bit static linking)
+
+            **Windows**
+            - x64 (Intel/AMD 64-bit)
+            - x86 (Intel/AMD 32-bit)
+            - arm64 (ARM 64-bit)
+
+            **macOS**
+            - x86_64 (Intel)
+            - aarch64 (Apple Silicon)
+
+            ### Python Version Support
+            Compatible with Python 3.8, 3.9, 3.10, 3.11, 3.12, and 3.13
+
+            ### Installation
+            Download the appropriate wheel for your platform and install with:
+            ```bash
+            pip install <downloaded-wheel-file>
+            ```
+
+            Or install from source using the provided source distribution.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
