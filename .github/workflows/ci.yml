@@ -73,12 +73,37 @@ jobs:
     strategy:
       matrix:
         target: [aarch64, armv7]
+        include:
+          - target: aarch64
+            arch_flag: "8"
+            gcc_target: "aarch64-unknown-linux-gnu"
+          - target: armv7
+            arch_flag: "7"
+            gcc_target: "armv7-unknown-linux-gnueabihf"
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
     - uses: actions/setup-python@v5
       with:
         python-version: '3.11'
+
+    # Configure cross-compilation environment variables for ARM builds
+    - name: Configure ARM cross-compilation environment
+      run: |
+        echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+        echo "CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER=arm-linux-gnueabihf-gcc" >> $GITHUB_ENV
+        echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+        echo "CC_armv7_unknown_linux_gnueabihf=arm-linux-gnueabihf-gcc" >> $GITHUB_ENV
+
+        # Critical: Set ARM architecture flags for ring crate compilation
+        if [ "${{ matrix.target }}" = "aarch64" ]; then
+          echo "CFLAGS_aarch64_unknown_linux_gnu=-D__ARM_ARCH=8" >> $GITHUB_ENV
+          echo "CXXFLAGS_aarch64_unknown_linux_gnu=-D__ARM_ARCH=8" >> $GITHUB_ENV
+        elif [ "${{ matrix.target }}" = "armv7" ]; then
+          echo "CFLAGS_armv7_unknown_linux_gnueabihf=-D__ARM_ARCH=7" >> $GITHUB_ENV
+          echo "CXXFLAGS_armv7_unknown_linux_gnueabihf=-D__ARM_ARCH=7" >> $GITHUB_ENV
+        fi
+
     - name: Build wheels
       uses: PyO3/maturin-action@v1
       with:
@@ -86,6 +111,18 @@ jobs:
         args: --release --out dist --interpreter 3.8 3.9 3.10 3.11 3.12
         sccache: 'true'
         manylinux: auto
+        # Enhanced container configuration with proper ARM toolchain
+        before-script-linux: |
+          # Install ARM cross-compilation toolchain
+          if command -v yum &> /dev/null; then
+            # CentOS/RHEL based manylinux images
+            yum install -y gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf
+          elif command -v apt-get &> /dev/null; then
+            # Debian/Ubuntu based images
+            apt-get update
+            apt-get install -y gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf
+          fi
+
     - name: Upload wheels
       uses: actions/upload-artifact@v4
       with:
@@ -105,6 +142,17 @@ jobs:
     - uses: actions/setup-python@v5
       with:
         python-version: '3.11'
+
+    # Configure musl cross-compilation environment
+    - name: Configure musl cross-compilation environment
+      run: |
+        if [ "${{ matrix.target }}" = "aarch64" ]; then
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-musl-gcc" >> $GITHUB_ENV
+          echo "CC_aarch64_unknown_linux_musl=aarch64-linux-musl-gcc" >> $GITHUB_ENV
+          echo "CFLAGS_aarch64_unknown_linux_musl=-D__ARM_ARCH=8" >> $GITHUB_ENV
+          echo "CXXFLAGS_aarch64_unknown_linux_musl=-D__ARM_ARCH=8" >> $GITHUB_ENV
+        fi
+
     - name: Build wheels
       uses: PyO3/maturin-action@v1
       with:
@@ -112,6 +160,7 @@ jobs:
         args: --release --out dist --interpreter 3.8 3.9 3.10 3.11 3.12
         sccache: 'true'
         manylinux: musllinux_1_1
+
     - name: Upload wheels
       uses: actions/upload-artifact@v4
       with:
