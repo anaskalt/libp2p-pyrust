@@ -419,11 +419,15 @@ jobs:
             import libp2p_pyrust
             print(f'✅ Successfully imported libp2p_pyrust version: {libp2p_pyrust.__version__}')
 
-            # Test basic functionality
+            # Test basic functionality based on your examples
             assert hasattr(libp2p_pyrust, 'generate_ed25519_keypair'), 'Missing generate_ed25519_keypair function'
             assert hasattr(libp2p_pyrust, 'init_global_p2p_network'), 'Missing init_global_p2p_network function'
+            assert hasattr(libp2p_pyrust, 'get_global_connected_peers'), 'Missing get_global_connected_peers function'
+            assert hasattr(libp2p_pyrust, 'publish_message'), 'Missing publish_message function'
+            assert hasattr(libp2p_pyrust, 'subscribe_to_messages'), 'Missing subscribe_to_messages function'
 
             print('✅ Basic functionality verification passed')
+            print(f'✅ Available functions: {[attr for attr in dir(libp2p_pyrust) if not attr.startswith(\"_\")]}')
         except ImportError as e:
             print(f'❌ Import failed: {e}')
             exit(1)
