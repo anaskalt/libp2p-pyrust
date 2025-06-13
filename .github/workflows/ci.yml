@@ -462,45 +462,85 @@ jobs:
     - name: Verify installation and basic functionality
       shell: bash
       run: |
-        echo "🧪 Running functionality verification..."
+        echo "Running functionality verification..."
         python -c "
         import sys
+        import os
+
+        # Set UTF-8 encoding for Windows compatibility
+        if sys.platform == 'win32':
+            import codecs
+            sys.stdout = codecs.getwriter('utf-8')(sys.stdout.detach())
+            sys.stderr = codecs.getwriter('utf-8')(sys.stderr.detach())
+
         try:
+            print('Attempting to import libp2p_pyrust...')
             import libp2p_pyrust
-            print(f'✅ Successfully imported libp2p_pyrust version: {libp2p_pyrust.__version__}')
+            print(f'Successfully imported libp2p_pyrust version: {libp2p_pyrust.__version__}')
 
             # Test basic functionality based on your examples
-            assert hasattr(libp2p_pyrust, 'generate_ed25519_keypair'), 'Missing generate_ed25519_keypair function'
-            assert hasattr(libp2p_pyrust, 'init_global_p2p_network'), 'Missing init_global_p2p_network function'
-            assert hasattr(libp2p_pyrust, 'get_global_connected_peers'), 'Missing get_global_connected_peers function'
-            assert hasattr(libp2p_pyrust, 'publish_message'), 'Missing publish_message function'
-            assert hasattr(libp2p_pyrust, 'subscribe_to_messages'), 'Missing subscribe_to_messages function'
-            assert hasattr(libp2p_pyrust, 'get_host_addrs'), 'Missing get_host_addrs function'
-            assert hasattr(libp2p_pyrust, 'get_peer_id'), 'Missing get_peer_id function'
+            functions_to_test = [
+                'generate_ed25519_keypair',
+                'init_global_p2p_network',
+                'get_global_connected_peers',
+                'publish_message',
+                'subscribe_to_messages',
+                'get_host_addrs',
+                'get_peer_id'
+            ]
 
-            print('✅ All required functions are available')
-            print(f'✅ Available functions: {[attr for attr in dir(libp2p_pyrust) if not attr.startswith(\"_\")]}')
+            missing_functions = []
+            for func_name in functions_to_test:
+                if not hasattr(libp2p_pyrust, func_name):
+                    missing_functions.append(func_name)
+
+            if missing_functions:
+                print(f'Missing functions: {missing_functions}')
+                sys.exit(1)
+
+            print('All required functions are available')
+            available_funcs = [attr for attr in dir(libp2p_pyrust) if not attr.startswith('_')]
+            print(f'Available functions: {available_funcs}')
 
             # Test example usage pattern from your repo
-            print('🧪 Testing example usage pattern...')
-            # This mimics: import libp2p_pyrust as libp2p
-            # followed by: libp2p.generate_ed25519_keypair()
+            print('Testing example usage pattern...')
             import tempfile
-            import os
             with tempfile.TemporaryDirectory() as tmpdir:
                 key_path = os.path.join(tmpdir, 'test.key')
                 result = libp2p_pyrust.generate_ed25519_keypair(key_path)
-                assert os.path.exists(key_path), 'Key file was not created'
-                print('✅ Example usage pattern verification passed')
+                if not os.path.exists(key_path):
+                    print('Key file was not created')
+                    sys.exit(1)
+                print('Example usage pattern verification passed')
 
-            print('✅ All verification tests passed successfully')
+            print('All verification tests passed successfully')
 
         except ImportError as e:
-            print(f'⚠️ Package not installed or not compatible with this platform: {e}')
+            print(f'Package not installed or not compatible with this platform: {e}')
             print('This is expected for some platform/Python combinations where no compatible wheel exists')
+
+            # Debug information for Windows import issues
+            if sys.platform == 'win32':
+                print('Windows-specific debug information:')
+                try:
+                    import pkg_resources
+                    distributions = [d for d in pkg_resources.working_set if 'libp2p' in d.project_name.lower()]
+                    print(f'Found libp2p distributions: {[d.project_name for d in distributions]}')
+                except:
+                    pass
+
+                # Check if the package directory exists
+                import site
+                for site_dir in site.getsitepackages():
+                    libp2p_path = os.path.join(site_dir, 'libp2p_pyrust')
+                    if os.path.exists(libp2p_path):
+                        print(f'libp2p_pyrust directory found at: {libp2p_path}')
+                        print(f'Contents: {os.listdir(libp2p_path)}')
+                        break
+
             sys.exit(0)  # Exit gracefully, not an error
         except Exception as e:
-            print(f'❌ Functionality test failed: {e}')
+            print(f'Functionality test failed: {e}')
             import traceback
             traceback.print_exc()
             sys.exit(1)
