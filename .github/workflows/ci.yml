@@ -206,9 +206,6 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Note: aarch64 musl target excluded due to Rust cdylib limitation
-        # musl aarch64 doesn't support dynamic libraries required for PyO3 extensions
-        # Standard glibc aarch64 provides comprehensive ARM64 Linux coverage
         target: [x86_64]
     runs-on: ubuntu-latest
     steps:
@@ -225,10 +222,8 @@ jobs:
       with:
         target: ${{ matrix.target }}
         args: --release --out dist --interpreter 3.8 3.9 3.10 3.11 3.12
-        # Disable sccache for musl builds to avoid compatibility issues
         sccache: 'false'
         manylinux: musllinux_1_1
-        # Use official PyPA musl image for maximum compatibility
         container: quay.io/pypa/musllinux_1_1_${{ matrix.target }}
 
     - name: Upload build artifacts
@@ -250,9 +245,6 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Note: ARM64 target excluded due to ring crate MSVC compatibility issues
-        # ring v0.16.20 C code has intrinsic function incompatibilities with Windows ARM64 MSVC
-        # Standard x86_64/x86 coverage provides comprehensive Windows platform support
         target: [x64, x86]
         include:
           - target: x64
@@ -327,33 +319,6 @@ jobs:
         retention-days: 7
 
   # ===============================================================================
-  # SOURCE DISTRIBUTION BUILD
-  # ===============================================================================
-
-  build-sdist:
-    name: Source Distribution
-    needs: [check]
-    if: success()
-    timeout-minutes: 15
-    runs-on: ubuntu-latest
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-
-    - name: Build source distribution
-      uses: PyO3/maturin-action@v1
-      with:
-        command: sdist
-        args: --out dist
-
-    - name: Upload source distribution
-      uses: actions/upload-artifact@v4
-      with:
-        name: wheels-sdist
-        path: dist
-        retention-days: 7
-
-  # ===============================================================================
   # COMPREHENSIVE INTEGRATION TESTING
   # ===============================================================================
 
@@ -367,9 +332,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
         python-version: ['3.9', '3.10', '3.11', '3.12']
-        # Optimize testing matrix by excluding some combinations
         exclude:
-          # Reduce test matrix for faster CI while maintaining coverage
           - os: ubuntu-latest
             python-version: '3.9'
           - os: windows-latest
@@ -547,20 +510,26 @@ jobs:
         "
 
   # ===============================================================================
-  # RELEASE AUTOMATION WITH COMPREHENSIVE VALIDATION
+  # PYPI & GITHUB RELEASE (WHEELS ONLY - NO SOURCE CODE)
   # ===============================================================================
 
   release:
-    name: GitHub Release Distribution
+    name: PyPI & GitHub Release Distribution
     runs-on: ubuntu-latest
     if: ${{ startsWith(github.ref, 'refs/tags/') }}
-    needs: [build-linux, build-linux-arm, build-linux-musl, build-windows, build-macos, build-sdist, test-wheels]
+    needs: [build-linux, build-linux-arm, build-linux-musl, build-windows, build-macos, test-wheels]
     timeout-minutes: 15
     permissions:
       contents: write
+      id-token: write  # For PyPI trusted publishing
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Setup Python environment
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
       - name: Download all build artifacts
         uses: actions/download-artifact@v4
@@ -569,213 +538,114 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Comprehensive artifact validation and organization
+      - name: Filter artifacts - Keep only wheels (NO SOURCE CODE)
         run: |
           set -e
-
-          echo "=== libp2p-pyrust Release Artifact Analysis ==="
+          echo "=== 🔒 PRIVATE RELEASE: WHEELS ONLY (NO SOURCE CODE) ==="
           echo ""
 
-          # Verify minimum artifact requirements
+          # Remove any source distributions to keep source code private
+          if find dist -name "*.tar.gz" -delete; then
+            echo "🗑️  Removed source distributions to protect source code"
+          fi
+
+          # Verify we only have wheels
           WHEEL_COUNT=$(find dist -name "*.whl" | wc -l)
-          SDIST_COUNT=$(find dist -name "*.tar.gz" | wc -l)
+          TAR_COUNT=$(find dist -name "*.tar.gz" | wc -l)
 
-          echo "📊 Artifact Summary:"
-          echo "  Total wheels: $WHEEL_COUNT"
-          echo "  Source distributions: $SDIST_COUNT"
-          echo "  Total files: $(find dist -type f | wc -l)"
+          echo "📊 Final Release Artifacts:"
+          echo "  🎯 Wheels: $WHEEL_COUNT"
+          echo "  📄 Source distributions: $TAR_COUNT"
           echo ""
 
-          # Validate minimum expected artifacts (adjusted for Python 3.8-3.12 support)
+          if [ "$TAR_COUNT" -gt 0 ]; then
+            echo "❌ ERROR: Source distributions found! Source code must remain private."
+            exit 1
+          fi
+
           if [ "$WHEEL_COUNT" -lt 5 ]; then
-            echo "❌ Error: Only $WHEEL_COUNT wheels found, expected at least 5"
-            echo "This indicates a critical build failure"
+            echo "❌ ERROR: Only $WHEEL_COUNT wheels found, expected at least 5"
             exit 1
           fi
 
-          if [ "$SDIST_COUNT" -eq 0 ]; then
-            echo "❌ Error: No source distribution found"
-            exit 1
-          fi
-
-          # Categorize and validate wheels by platform
-          echo "📦 Platform-specific Wheel Analysis:"
-
+          echo "✅ Validation passed: Only wheels will be released (source code stays private)"
           echo ""
-          echo "🐧 Linux Standard (glibc):"
-          find dist -name "*linux_x86_64*" -o -name "*linux_i686*" | grep -v musl | sort | sed 's/^/  /' || echo "  ⚠️  No standard Linux wheels found"
 
-          echo ""
-          echo "🔧 Linux ARM:"
-          find dist -name "*linux_aarch64*" -o -name "*linux_armv7*" | grep -v musl | sort | sed 's/^/  /' || echo "  ⚠️  No ARM Linux wheels found"
+          # List all wheels that will be published
+          echo "🚀 Wheels to be published to PyPI:"
+          find dist -name "*.whl" | sort | sed 's/^/  📦 /'
 
-          echo ""
-          echo "🏔️  Linux musl (Static):"
-          find dist -name "*musllinux*" | sort | sed 's/^/  /' || echo "  ⚠️  No musl wheels found"
+      - name: Install publishing dependencies
+        run: |
+          python -m pip install --upgrade pip twine
 
-          echo ""
-          echo "🪟 Windows:"
-          find dist -name "*win32*" -o -name "*win_amd64*" -o -name "*win_arm64*" | sort | sed 's/^/  /' || echo "  ⚠️  No Windows wheels found"
+      - name: 🚀 Publish to PyPI (WHEELS ONLY)
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          echo "🚀 Publishing wheels to PyPI..."
+          echo "🔒 Source code remains private - only compiled wheels will be uploaded"
 
-          echo ""
-          echo "🍎 macOS:"
-          find dist -name "*macosx*" | sort | sed 's/^/  /' || echo "  ⚠️  No macOS wheels found"
+          # Upload only wheels to PyPI
+          python -m twine upload dist/*.whl --verbose
 
-          echo ""
-          echo "📄 Source Distribution:"
-          find dist -name "*.tar.gz" | sed 's/^/  /'
-
-          echo ""
-          echo "✅ Artifact validation completed successfully"
-
-          # Validate wheel naming conventions
-          echo ""
-          echo "🔍 Wheel Naming Validation:"
-          for wheel in dist/*.whl; do
-            if [[ ! "$(basename "$wheel")" =~ ^libp2p_pyrust-.*\.whl$ ]]; then
-              echo "⚠️  Warning: Unusual wheel name: $(basename "$wheel")"
-            fi
-          done
+          echo "✅ Successfully published to PyPI!"
+          echo "🎉 Users can now install with: pip install libp2p-pyrust"
 
       - name: Create comprehensive GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*
+          files: dist/*.whl  # Only wheels, no source code
           generate_release_notes: true
           draft: false
           prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
           body: |
-            # 🚀 libp2p-pyrust Professional Multi-Platform Release
+            # 🚀 libp2p-pyrust Professional Release
 
-            ## 🌟 Release Highlights
+            ## 📥 **Super Easy Installation**
 
-            This release provides **comprehensive cross-platform support** with professionally optimized wheels for maximum compatibility and performance across all major deployment scenarios.
-
-            ## 🎯 Complete Platform Coverage
-
-            ### 🐧 **Linux Distributions**
-
-            **Standard glibc Support (Dynamic Linking):**
-            - ✅ `x86_64` - Intel/AMD 64-bit (Ubuntu, CentOS, Debian, Fedora, RHEL)
-            - ✅ `i686` - Intel/AMD 32-bit legacy systems
-            - ✅ `aarch64` - ARM 64-bit (Raspberry Pi 4+, ARM servers, cloud instances)
-            - ✅ `armv7` - ARM 32-bit (Raspberry Pi 2/3, embedded systems)
-
-            **musl libc Support (Static Linking):**
-            - ✅ `musllinux_x86_64` - Alpine Linux, Docker containers, minimal deployments
-
-            > **Technical Note**: musl aarch64 builds are excluded due to Rust compiler limitations with `cdylib` crate types on the `aarch64-unknown-linux-musl` target. The standard glibc aarch64 wheels provide comprehensive ARM64 Linux coverage for all practical deployment scenarios.
-
-            ### 🪟 **Windows Support**
-            - ✅ `win_amd64` - Windows 64-bit (Intel/AMD)
-            - ✅ `win32` - Windows 32-bit legacy systems
-
-            > **Technical Note**: Windows ARM64 builds are excluded due to ring crate compatibility issues with the MSVC ARM64 toolchain. The ring cryptographic library (v0.16.20) contains C code that uses x86_64-specific intrinsic functions (`_addcarry_u64`, `_subborrow_u64`) not available on the Windows ARM64 MSVC compiler. Standard x86_64/x86 wheels provide comprehensive Windows platform coverage.
-
-            ### 🍎 **macOS Support**
-            - ✅ `macosx_x86_64` - Intel-based Macs (macOS 10.12+)
-            - ✅ `macosx_arm64` - Apple Silicon (M1/M2/M3/M4)
-
-            ## 🐍 **Python Version Compatibility**
-
-            **Full support for:** Python 3.8, 3.9, 3.10, 3.11, 3.12
-
-            > **Technical Note**: Python 3.13 support is currently excluded due to PyO3 ecosystem compatibility constraints. The PyO3 bindings library (v0.20.x) has maximum tested compatibility through Python 3.12. Python 3.13 support will be enabled in future releases as the PyO3 ecosystem matures and provides stable support for the latest Python version.
-
-            *All wheels are built with the latest stable Rust toolchain and optimized for maximum performance*
-
-            ## 📥 **Installation Instructions**
-
-            ### 🎯 **Automatic Installation (Recommended)**
             ```bash
             pip install libp2p-pyrust
             ```
-            *pip automatically selects the optimal wheel for your platform*
 
-            ### 🔧 **Manual Wheel Installation**
-            ```bash
-            # Download the appropriate wheel for your platform from the release assets
-            # Example for Linux x86_64:
-            pip install libp2p_pyrust-*-cp311-cp311-linux_x86_64.whl
+            **That's it! Pip will automatically choose the right wheel for your system!**
+
+            ## ✅ **Supported Platforms**
+
+            ### 🐧 **Linux**
+            - ✅ x86_64 (Intel/AMD 64-bit)
+            - ✅ i686 (Intel/AMD 32-bit)
+            - ✅ aarch64 (ARM 64-bit - Raspberry Pi 4+, ARM servers)
+            - ✅ armv7 (ARM 32-bit - Raspberry Pi 2/3)
+            - ✅ musllinux x86_64 (Alpine Linux, Docker containers)
+
+            ### 🪟 **Windows**
+            - ✅ x64 (64-bit Intel/AMD)
+            - ✅ x86 (32-bit legacy systems)
+
+            ### 🍎 **macOS**
+            - ✅ Intel-based Macs (macOS 10.12+)
+            - ✅ Apple Silicon (M1/M2/M3/M4)
+
+            ### 🐍 **Python Versions**
+            - ✅ Python 3.8, 3.9, 3.10, 3.11, 3.12
+
+            ## 🔒 **Privacy Note**
+            This is a **private repository** release. Only compiled wheels are distributed - the source code remains private.
+
+            ## 📝 **Usage in requirements.txt**
+            ```
+            libp2p-pyrust==${{ github.ref_name }}
             ```
 
-            ### 🐳 **Container Deployment Examples**
-
-            **Alpine Linux (musl):**
-            ```dockerfile
-            FROM alpine:3.18
-            RUN apk add --no-cache python3 py3-pip
-            COPY libp2p_pyrust-*-musllinux_1_1_x86_64.whl /tmp/
-            RUN pip install /tmp/libp2p_pyrust-*-musllinux_1_1_x86_64.whl
-            ```
-
-            **ARM64 Linux (glibc):**
-            ```dockerfile
-            FROM ubuntu:22.04
-            RUN apt-get update && apt-get install -y python3 python3-pip
-            COPY libp2p_pyrust-*-linux_aarch64.whl /tmp/
-            RUN pip install /tmp/libp2p_pyrust-*-linux_aarch64.whl
-            ```
-
-            ### 🛠️ **Development Installation**
-
-            For development or unsupported platforms, use the source distribution:
-            ```bash
-            pip install libp2p_pyrust-*.tar.gz
-            ```
-            *Requires Rust toolchain and development dependencies*
-
-            ## 🔧 **Technical Specifications**
-
-            - **🦀 Build System**: Maturin with PyO3 bindings
-            - **⚡ Optimization**: Release builds with Link-Time Optimization (LTO)
-            - **📦 Packaging**: manylinux2014 compliance for maximum compatibility
-            - **🔒 Security**: All wheels built in isolated environments with integrity validation
-            - **🧪 Testing**: Comprehensive cross-platform testing on real systems
-            - **📏 Size**: Optimized binary size with debug symbol stripping
-
-            ## 🏗️ **Architecture Details**
-
-            **Cross-Compilation Strategy:**
-            - Windows ARM64: Cross-compiled from x64 hosts using MSVC toolchain
-            - Linux ARM variants: Native cross-compilation with architecture-specific optimizations
-            - musl builds: Optimized for static linking and container deployment
-
-            **Performance Optimizations:**
-            - Ring crate compatibility with proper ARM architecture flags
-            - LTO (Link-Time Optimization) enabled for all release builds
-            - Platform-specific compiler optimizations
-
-            ## 🆘 **Support & Troubleshooting**
-
-            ### **Platform-Specific Notes:**
-
-            **🐧 Linux**: For maximum compatibility on older systems, use musl wheels for x86_64 deployments
-
-            **🪟 Windows**: Comprehensive coverage for Intel/AMD architectures (x64, x86)
-
-            **🍎 macOS**: Universal compatibility across Intel and Apple Silicon architectures
-
-            ### **Installation Debugging:**
-            ```bash
-            # Force wheel selection for debugging
-            pip install --only-binary=all libp2p-pyrust
-
-            # Check platform compatibility
-            pip debug --verbose
-
-            # Verify installation
-            python -c "import libp2p_pyrust; print(f'Version: {libp2p_pyrust.__version__}')"
-            ```
+            ## 🎯 **Key Features**
+            - 🔥 **Zero Configuration**: Pip automatically selects the correct wheel
+            - ⚡ **Optimized Builds**: Release builds with Link-Time Optimization
+            - 🌍 **Universal Compatibility**: Works across all major platforms
+            - 🔒 **Private Source**: Only compiled binaries are distributed
 
             ---
-
-            **🏗️ Build Information:**
-            - Built with Rust `stable` toolchain
-            - Professional CI/CD with comprehensive cross-platform testing
-            - Zero external dependencies for maximum build reliability
-            - Industry-standard manylinux compliance
-
-            *This release ensures maximum reliability and performance across all supported platforms through extensive automated testing and professional-grade build infrastructure.*
+            **🎉 Available on PyPI: [pypi.org/project/libp2p-pyrust](https://pypi.org/project/libp2p-pyrust)**
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
