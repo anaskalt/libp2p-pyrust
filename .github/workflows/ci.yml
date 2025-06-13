@@ -460,6 +460,7 @@ jobs:
         fi
 
     - name: Verify installation and basic functionality
+      shell: bash
       run: |
         echo "🧪 Running functionality verification..."
         python -c "
@@ -500,6 +501,8 @@ jobs:
             sys.exit(0)  # Exit gracefully, not an error
         except Exception as e:
             print(f'❌ Functionality test failed: {e}')
+            import traceback
+            traceback.print_exc()
             sys.exit(1)
         "
 
