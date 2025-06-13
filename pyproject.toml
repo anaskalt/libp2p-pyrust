@@ -24,17 +24,12 @@ classifiers = [
     "Intended Audience :: System Administrators",
     "License :: OSI Approved :: MIT License",
 
-    # OS support declarations
     "Operating System :: OS Independent",
     "Operating System :: Unix",
     "Operating System :: POSIX :: Linux",
     "Operating System :: MacOS",
     "Operating System :: Microsoft :: Windows",
 
-    # Architecture support declarations
-    "Platform :: AMD64",
-    "Platform :: ARM64",
-    "Platform :: x86-64",
 
     "Environment :: Console",
     "Topic :: Software Development :: Libraries :: Python Modules",
