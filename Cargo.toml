@@ -7,24 +7,42 @@ description = "Python bindings for libp2p implemented in Rust"
 license = "MIT"
 
 [dependencies]
-libp2p = { version = "0.53.2", features = ["tokio", "gossipsub", "mdns", "noise", "macros", "tcp", "yamux", "quic", "dns", "kad", "rsa", "identify", "cbor", "request-response"] }
-pyo3 = { version = "0.20.2", features = ["extension-module", "generate-import-lib"] }
-pyo3-asyncio = { version = "0.20.0", features = ["tokio-runtime"] }
-tokio = { version = "1.34", features = ["full"] }
+# Core P2P networking with optimized features for production
+libp2p = { version = "0.56.0", features = ["tokio", "gossipsub", "mdns", "noise", "macros", "tcp", "yamux", "quic", "dns", "kad", "rsa", "identify", "cbor", "request-response"] }
+
+# Python bindings - CRITICAL SECURITY UPDATE from 0.20.2 to 0.27.1
+# Fixes CVE buffer overflow in PyString::from_object
+pyo3 = { version = "0.27.1", features = ["extension-module", "generate-import-lib"] }
+
+# Async runtime bridge - migrated from deprecated pyo3-asyncio to pyo3-async-runtimes
+pyo3-async-runtimes = { version = "0.27", features = ["tokio-runtime"] }
+
+# Async runtime with full features for robust networking
+tokio = { version = "1.42", features = ["full"] }
+
+# Core utilities
 async-trait = "0.1"
-futures = "0.3.29"
-tracing = "0.1.37"
-serde = { version = "1.0.202", features = ["derive"] }
+futures = "0.3"
+anyhow = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+
+# Logging and tracing
+tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-env_logger = "0.10"
-anyhow = "1.0.75"
-chrono = "0.4"
-async-stream = "0.3.5"
-lazy_static = "1.4.0"
-multihash = "0.19.1"
-base64 = "0.21.7"
+env_logger = "0.11"
 log = "0.4"
-bs58 = "0.4.0"
+
+# Time and encoding utilities
+chrono = "0.4"
+base64 = "0.22"
+bs58 = "0.5"
+multihash = "0.19"
+
+# Async utilities
+async-stream = "0.3"
+
+# Static initialization (consider replacing with OnceLock in future)
+lazy_static = "1.5"
 
 [lib]
 name = "libp2p_pyrust"

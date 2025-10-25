@@ -28,6 +28,10 @@ lazy_static! {
 /// # Returns
 ///
 /// A Python `None` object on success.
+///
+/// # Errors
+///
+/// Returns a PyRuntimeError if the P2P network fails to initialize.
 #[pyfunction]
 fn init_global_p2p_network(
     py: Python<'_>,
@@ -35,12 +39,14 @@ fn init_global_p2p_network(
     port: u64,
     key_path: String,
     topic_name: String,
-) -> PyResult<&PyAny> {
+) -> PyResult<Bound<'_, PyAny>> {
     let tp = GLOBAL_P2P_NETWORK.clone();
-    pyo3_asyncio::tokio::future_into_py(py, async move {
+    pyo3_async_runtimes::tokio::future_into_py(py, async move {
         let p2p_net = P2PNetwork::new(bootnodes, port, key_path, topic_name)
             .await
-            .expect("start p2p server error");
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                format!("Failed to start P2P server: {}", e)
+            ))?;
         {
             let mut network = tp.lock().await;
             *network = Some(p2p_net);
@@ -58,23 +64,27 @@ fn init_global_p2p_network(
 /// # Returns
 ///
 /// A list of connected peer IDs.
+///
+/// # Errors
+///
+/// Returns a PyRuntimeError if the network is not initialized or fails to get peers.
 #[pyfunction]
-fn get_global_connected_peers(py: Python<'_>) -> PyResult<&PyAny> {
+fn get_global_connected_peers(py: Python<'_>) -> PyResult<Bound<'_, PyAny>> {
     let tp = GLOBAL_P2P_NETWORK.clone();
-    pyo3_asyncio::tokio::future_into_py(py, async move {
+    pyo3_async_runtimes::tokio::future_into_py(py, async move {
         let network = tp.lock().await;
         if let Some(network) = &*network {
             let peers = network
                 .get_connected_peers()
                 .await
-                .expect("Failed to get connected peers");
-            Python::with_gil(|py| {
-                Ok(peers
-                    .into_iter()
-                    .map(|peer| peer.to_string())
-                    .collect::<Vec<String>>()
-                    .into_py(py))
-            })
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                    format!("Failed to get connected peers: {}", e)
+                ))?;
+            let peer_strings: Vec<String> = peers
+                .into_iter()
+                .map(|peer| peer.to_string())
+                .collect();
+            Ok(peer_strings)
         } else {
             Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
                 "P2PNetwork is not initialized",
@@ -93,10 +103,14 @@ fn get_global_connected_peers(py: Python<'_>) -> PyResult<&PyAny> {
 /// # Returns
 ///
 /// A Python `None` object on success.
+///
+/// # Errors
+///
+/// Returns a PyRuntimeError if the network is not initialized or connection fails.
 #[pyfunction]
-fn connect_to_peer(py: Python<'_>, addr: String) -> PyResult<&PyAny> {
+fn connect_to_peer(py: Python<'_>, addr: String) -> PyResult<Bound<'_, PyAny>> {
     let tp = GLOBAL_P2P_NETWORK.clone();
-    pyo3_asyncio::tokio::future_into_py(py, async move {
+    pyo3_async_runtimes::tokio::future_into_py(py, async move {
         let network = tp.lock().await;
         if let Some(network) = &*network {
             network.connect_to_peer(&addr).await.map_err(|e| {
@@ -121,10 +135,14 @@ fn connect_to_peer(py: Python<'_>, addr: String) -> PyResult<&PyAny> {
 /// # Returns
 ///
 /// A Python `None` object on success.
+///
+/// # Errors
+///
+/// Returns a PyRuntimeError if the network is not initialized or publish fails.
 #[pyfunction]
-fn publish_message(py: Python<'_>, message: Vec<u8>) -> PyResult<&PyAny> {
+fn publish_message(py: Python<'_>, message: Vec<u8>) -> PyResult<Bound<'_, PyAny>> {
     let tp = GLOBAL_P2P_NETWORK.clone();
-    pyo3_asyncio::tokio::future_into_py(py, async move {
+    pyo3_async_runtimes::tokio::future_into_py(py, async move {
         let network = tp.lock().await;
         if let Some(network) = &*network {
             network.publish_message(message).await.map_err(|e| {
@@ -149,11 +167,16 @@ fn publish_message(py: Python<'_>, message: Vec<u8>) -> PyResult<&PyAny> {
 /// # Returns
 ///
 /// A Python `None` object on success.
+///
+/// # Errors
+///
+/// Returns a PyRuntimeError if the network is not initialized.
+/// Logs warnings if callback invocation fails but continues processing messages.
 #[pyfunction]
-fn subscribe_to_messages(py: Python, callback: PyObject) -> PyResult<&PyAny> {
+fn subscribe_to_messages(py: Python<'_>, callback: Py<PyAny>) -> PyResult<Bound<'_, PyAny>> {
     let tp = GLOBAL_P2P_NETWORK.clone();
-    pyo3_asyncio::tokio::future_into_py(py, async move {
-        let mut receiver_result = {
+    pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        let mut receiver = {
             let network = tp.lock().await;
             network
                 .as_ref()
@@ -161,10 +184,15 @@ fn subscribe_to_messages(py: Python, callback: PyObject) -> PyResult<&PyAny> {
                 .subscribe_to_messages()
         };
 
-        while let Ok(message_event) = receiver_result.recv().await {
+        while let Ok(message_event) = receiver.recv().await {
             Python::with_gil(|py| {
                 let py_message = PyBytes::new(py, &message_event.content);
-                callback.call1(py, (py_message,)).unwrap();
+                // Properly handle callback errors without panicking
+                if let Err(e) = callback.call1(py, (py_message,)) {
+                    log::warn!("Message callback failed: {}", e);
+                    // Optionally: print the error to Python's stderr
+                    e.print(py);
+                }
             });
         }
         Ok(Python::with_gil(|py| py.None()))
@@ -182,10 +210,15 @@ fn subscribe_to_messages(py: Python, callback: PyObject) -> PyResult<&PyAny> {
 /// # Returns
 ///
 /// A Python `None` object on success.
+///
+/// # Errors
+///
+/// Returns a PyValueError if the peer ID is invalid.
+/// Returns a PyRuntimeError if the network is not initialized or sending fails.
 #[pyfunction]
-fn send_direct_message(py: Python<'_>, peer_id: String, message: Vec<u8>) -> PyResult<&PyAny> {
+fn send_direct_message(py: Python<'_>, peer_id: String, message: Vec<u8>) -> PyResult<Bound<'_, PyAny>> {
     let tp = GLOBAL_P2P_NETWORK.clone();
-    pyo3_asyncio::tokio::future_into_py(py, async move {
+    pyo3_async_runtimes::tokio::future_into_py(py, async move {
         let network = tp.lock().await;
         if let Some(network) = &*network {
             let peer_id = PeerId::from_bytes(
@@ -215,21 +248,23 @@ fn send_direct_message(py: Python<'_>, peer_id: String, message: Vec<u8>) -> PyR
 /// # Returns
 ///
 /// A list of host addresses.
+///
+/// # Errors
+///
+/// Returns a PyRuntimeError if the network is not initialized.
 #[pyfunction]
-fn get_host_addrs(py: Python<'_>) -> PyResult<&PyAny> {
+fn get_host_addrs(py: Python<'_>) -> PyResult<Bound<'_, PyAny>> {
     let tp = GLOBAL_P2P_NETWORK.clone();
-    pyo3_asyncio::tokio::future_into_py(py, async move {
+    pyo3_async_runtimes::tokio::future_into_py(py, async move {
         let network = tp.lock().await;
         if let Some(network) = &*network {
             let addrs = network.full_addrs.read().await;
-            Python::with_gil(|py| {
-                Ok(addrs
-                    .clone()
-                    .into_iter()
-                    .map(|peer| peer.to_string())
-                    .collect::<Vec<String>>()
-                    .into_py(py))
-            })
+            // Optimize: avoid unnecessary clone by directly converting to Vec<String>
+            let addr_strings: Vec<String> = addrs
+                .iter()
+                .map(|addr| addr.to_string())
+                .collect();
+            Ok(addr_strings)
         } else {
             Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
                 "P2PNetwork is not initialized",
@@ -247,10 +282,14 @@ fn get_host_addrs(py: Python<'_>) -> PyResult<&PyAny> {
 /// # Returns
 ///
 /// The peer ID as a string.
+///
+/// # Errors
+///
+/// Returns a PyRuntimeError if the network is not initialized.
 #[pyfunction]
-fn get_peer_id(py: Python<'_>) -> PyResult<&PyAny> {
+fn get_peer_id(py: Python<'_>) -> PyResult<Bound<'_, PyAny>> {
     let tp = GLOBAL_P2P_NETWORK.clone();
-    pyo3_asyncio::tokio::future_into_py(py, async move {
+    pyo3_async_runtimes::tokio::future_into_py(py, async move {
         let network = tp.lock().await;
         if let Some(network) = &*network {
             let peer_id = network.peer_id.to_string();
@@ -322,21 +361,21 @@ pub fn get_version() -> String {
 
 /// The main Python module definition.
 #[pymodule]
-fn libp2p_pyrust(_py: Python, m: &PyModule) -> PyResult<()> {
+fn libp2p_pyrust(m: &Bound<'_, pyo3::types::PyModule>) -> PyResult<()> {
     let version = get_version();
     m.add("__version__", version.clone())?;
     // keep VERSION for compatibility
     m.add("VERSION", version)?;
-    m.add_wrapped(wrap_pyfunction!(init_global_p2p_network))?;
-    m.add_wrapped(wrap_pyfunction!(get_global_connected_peers))?;
-    m.add_wrapped(wrap_pyfunction!(connect_to_peer))?;
-    m.add_wrapped(wrap_pyfunction!(publish_message))?;
-    m.add_wrapped(wrap_pyfunction!(subscribe_to_messages))?;
-    m.add_wrapped(wrap_pyfunction!(generate_ed25519_keypair))?;
-    m.add_wrapped(wrap_pyfunction!(get_host_addrs))?;
-    m.add_wrapped(wrap_pyfunction!(get_peer_id))?;
-    m.add_wrapped(wrap_pyfunction!(sign_data))?;
-    m.add_wrapped(wrap_pyfunction!(get_serialize_public_key))?;
-    m.add_wrapped(wrap_pyfunction!(send_direct_message))?;
+    m.add_function(wrap_pyfunction!(init_global_p2p_network, m)?)?;
+    m.add_function(wrap_pyfunction!(get_global_connected_peers, m)?)?;
+    m.add_function(wrap_pyfunction!(connect_to_peer, m)?)?;
+    m.add_function(wrap_pyfunction!(publish_message, m)?)?;
+    m.add_function(wrap_pyfunction!(subscribe_to_messages, m)?)?;
+    m.add_function(wrap_pyfunction!(generate_ed25519_keypair, m)?)?;
+    m.add_function(wrap_pyfunction!(get_host_addrs, m)?)?;
+    m.add_function(wrap_pyfunction!(get_peer_id, m)?)?;
+    m.add_function(wrap_pyfunction!(sign_data, m)?)?;
+    m.add_function(wrap_pyfunction!(get_serialize_public_key, m)?)?;
+    m.add_function(wrap_pyfunction!(send_direct_message, m)?)?;
     Ok(())
 }

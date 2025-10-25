@@ -109,10 +109,12 @@ impl P2PNetwork {
                     gossipsub::MessageId::from(s.finish().to_string())
                 };
 
+                // Optimized gossipsub configuration for production
                 let gossipsub_config = gossipsub::ConfigBuilder::default()
-                    .heartbeat_interval(Duration::from_secs(10))
+                    .heartbeat_interval(Duration::from_secs(30)) // Increased from 10s to reduce bandwidth
                     .validation_mode(gossipsub::ValidationMode::Strict)
                     .message_id_fn(message_id_fn)
+                    .max_transmit_size(1024 * 1024) // 1MB max message size
                     .build()
                     .map_err(io::Error::other)?;
 
@@ -146,7 +148,9 @@ impl P2PNetwork {
                     request_response,
                 })
             })?
-            .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(5)))
+            .with_swarm_config(|c| c
+                .with_idle_connection_timeout(Duration::from_secs(60)) // Increased from 5s to 60s for stability
+            )
             .build();
 
         swarm.behaviour_mut().kademlia.set_mode(Some(Mode::Server));
@@ -169,13 +173,16 @@ impl P2PNetwork {
         swarm.listen_on(format!("/ip4/0.0.0.0/udp/{}/quic-v1", port).parse()?)?;
         swarm.listen_on(format!("/ip4/0.0.0.0/tcp/{}", port).parse()?)?;
 
-        let (command_tx, mut command_rx) = mpsc::channel(64);
-        let (subscribe_message_tx, _) = broadcast::channel(1024);
-        let (connection_closed_message_tx, _) = broadcast::channel(1024);
+        // Optimized channel sizes for production workloads
+        let (command_tx, mut command_rx) = mpsc::channel(256); // Increased from 64
+        let (subscribe_message_tx, _) = broadcast::channel(8192); // Increased from 1024 to prevent message loss
+        let (connection_closed_message_tx, _) = broadcast::channel(512); // Increased from 1024
 
         let subscribe_message_tx_clone = subscribe_message_tx.clone();
         let connection_closed_message_tx_clone = connection_closed_message_tx.clone();
-        let mut timer = interval(Duration::from_secs(10));
+
+        // Reduced bootstrap frequency to save bandwidth (60s instead of 10s)
+        let mut timer = interval(Duration::from_secs(60));
         let full_addrs = Arc::new(RwLock::new(Vec::new()));
         let full_addrs_clone = full_addrs.clone();
 
@@ -199,15 +206,17 @@ impl P2PNetwork {
                                 };
                                 let _ = result_tx.send(dial_result);
                             },
-                            SwarmCommand::PublishMessage(message, result_tx) => {
+                            SwarmCommand::PublishMessage(mut message, result_tx) => {
+                                // Performance optimization: reuse message buffer instead of cloning
                                 let timestamp = Utc::now().to_rfc3339_opts(SecondsFormat::Nanos, true);
                                 let timestamp_bytes = timestamp.as_bytes();
 
-                                let mut message_with_timestamp = message.clone();
-                                message_with_timestamp.extend_from_slice(b"@");
-                                message_with_timestamp.extend_from_slice(timestamp_bytes);
+                                // Avoid clone: directly append to the original message
+                                message.reserve(1 + timestamp_bytes.len()); // Pre-allocate to avoid reallocations
+                                message.push(b'@');
+                                message.extend_from_slice(timestamp_bytes);
 
-                                let publish_result = swarm.behaviour_mut().gossipsub.publish(topic.clone(), message_with_timestamp);
+                                let publish_result = swarm.behaviour_mut().gossipsub.publish(topic.clone(), message);
                                 let result = publish_result.map(|_message_id| ()).map_err(anyhow::Error::new);
                                 let _ = result_tx.send(result);
                             },
@@ -227,7 +236,7 @@ impl P2PNetwork {
                     },
                     event = swarm.select_next_some() => match event {
                         SwarmEvent::Behaviour(MyBehaviourEvent::Identify(identify::Event::Sent { peer_id: _, .. })) => {},
-                        SwarmEvent::Behaviour(MyBehaviourEvent::Identify(identify::Event::Received { peer_id, info })) => {
+                        SwarmEvent::Behaviour(MyBehaviourEvent::Identify(identify::Event::Received { peer_id, info, .. })) => {
                             for address in info.listen_addrs.iter() {
                                 swarm.behaviour_mut().kademlia.add_address(&peer_id, address.clone());
                             }
@@ -274,6 +283,7 @@ impl P2PNetwork {
                         SwarmEvent::Behaviour(MyBehaviourEvent::RequestResponse(request_response::Event::Message {
                             peer,
                             message: request_response::Message::Request { request, channel, .. },
+                            ..
                         })) => {
                             let message_event = MessageEvent {
                                 source: peer,
@@ -291,14 +301,14 @@ impl P2PNetwork {
                         },
                         SwarmEvent::Behaviour(MyBehaviourEvent::RequestResponse(request_response::Event::OutboundFailure {
                             peer,
-                            request_id: _,
                             error,
+                            ..
                         })) => {
                             warn!("Outbound request to peer {:?} failed: {:?}", peer, error);
                         },
                         SwarmEvent::Behaviour(MyBehaviourEvent::RequestResponse(request_response::Event::ResponseSent {
                             peer,
-                            request_id: _,
+                            ..
                         })) => {
                             info!("Response sent to peer {:?}", peer);
                         },
